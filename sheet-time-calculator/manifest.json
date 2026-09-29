@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Sheet Time Calculator",
+  "version": "1.0.0",
+  "description": "Total Google Sheets working time from HH.MM cells such as 1.17 (1 hour 17 minutes).",
+  "minimum_chrome_version": "114",
+  "action": {
+    "default_title": "Sheet Time Calculator",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": ["storage", "scripting", "activeTab"],
+  "host_permissions": ["https://docs.google.com/spreadsheets/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://docs.google.com/spreadsheets/*"],
+      "js": ["src/content/content.js"],
+      "type": "module",
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/*", "src/shared/*"],
+      "matches": ["https://docs.google.com/*"]
+    }
+  ],
+  "commands": {
+    "toggle-calculator": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "Toggle Sheet Time Calculator"
+    }
+  }
+}

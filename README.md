@@ -1,4 +1,4 @@
-# Sheet Time Calculator
+# Revision Time Calculator
 
 A Chrome extension that totals working time from Google Sheets cells written in `HH.MM` notation.
 
@@ -39,7 +39,7 @@ The extension does not inject itself into other websites.
 2. Turn on **Developer mode**.
 3. Click **Load unpacked**.
 4. Choose the `sheet-time-calculator` folder (the folder that contains `manifest.json`).
-5. Pin **Sheet Time Calculator** if you want the icon visible.
+5. Pin **Revision Time Calculator** if you want the icon visible.
 
 There is no build step.
 

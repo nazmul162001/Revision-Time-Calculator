@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Sheet Time Calculator",
+  "name": "Revision Time Calculator",
   "version": "1.0.0",
   "description": "Total Google Sheets working time from HH.MM cells such as 1.17 (1 hour 17 minutes).",
   "minimum_chrome_version": "114",
   "action": {
-    "default_title": "Sheet Time Calculator",
+    "default_title": "Revision Time Calculator",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -31,8 +31,7 @@
   "content_scripts": [
     {
       "matches": ["https://docs.google.com/spreadsheets/*"],
-      "js": ["src/content/content.js"],
-      "type": "module",
+      "js": ["src/content/bootstrap.js"],
       "run_at": "document_idle"
     }
   ],
@@ -48,7 +47,7 @@
         "default": "Alt+Shift+S",
         "mac": "Alt+Shift+S"
       },
-      "description": "Toggle Sheet Time Calculator"
+      "description": "Toggle Revision Time Calculator"
     }
   }
 }

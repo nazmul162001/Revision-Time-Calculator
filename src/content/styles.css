@@ -54,15 +54,28 @@ button:focus-visible {
 
 .stc-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 12px;
-  padding: 18px 20px 8px;
+  padding: 16px 16px 8px 20px;
   cursor: grab;
   user-select: none;
 }
 
 .stc-header:active {
   cursor: grabbing;
+}
+
+.stc-header .stc-tool.is-close {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  margin-top: 2px;
+}
+
+.stc-header .stc-tool.is-close svg {
+  width: 18px;
+  height: 18px;
 }
 
 .stc-brand {

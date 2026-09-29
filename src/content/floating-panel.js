@@ -363,17 +363,18 @@ function buildPanel(hint) {
   const panel = document.createElement("section");
   panel.className = "stc-panel";
   panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-label", "Sheet Time Calculator");
+  panel.setAttribute("aria-label", "Revision Time Calculator");
 
   panel.innerHTML = `
     <header class="stc-header">
       <div class="stc-brand">
         <span class="stc-pip is-on" aria-hidden="true"></span>
         <div>
-          <div class="stc-title">Sheet Time Calculator</div>
+          <div class="stc-title">Revision Time Calculator</div>
           <div class="stc-subtitle"><span data-field="sheet">Sheet</span> · <span data-field="mode"></span></div>
         </div>
       </div>
+      <button type="button" class="stc-tool is-close" data-action="stop" aria-label="Close" title="Close"></button>
     </header>
     <div class="stc-body">
       <div class="stc-lcd" aria-live="polite">
@@ -386,7 +387,6 @@ function buildPanel(hint) {
       <p class="stc-invalid" data-field="invalid" hidden></p>
       <div class="stc-tools">
         <button type="button" class="stc-tool is-clear" data-action="clear" aria-label="Clear" title="Clear"></button>
-        <button type="button" class="stc-tool is-close" data-action="stop" aria-label="Close" title="Close"></button>
         <button type="button" class="stc-tool is-copy" data-action="copy-time" aria-label="Copy" title="Copy"></button>
         <button type="button" class="stc-revision" data-action="add-revision">Add to Revision</button>
       </div>
@@ -456,12 +456,12 @@ function buildChip() {
   restore.className = "stc-chip-text";
   restore.dataset.action = "restore";
   restore.textContent = "STC";
-  restore.setAttribute("aria-label", "Restore Sheet Time Calculator");
+  restore.setAttribute("aria-label", "Restore Revision Time Calculator");
   const close = document.createElement("button");
   close.type = "button";
   close.className = "stc-chip-close";
   close.dataset.action = "stop";
-  close.setAttribute("aria-label", "Stop Sheet Time Calculator");
+  close.setAttribute("aria-label", "Stop Revision Time Calculator");
   close.textContent = "×";
   chip.append(restore, close);
   return chip;

@@ -12,7 +12,7 @@ The calculator is a floating panel inside the spreadsheet. It stays open while y
 2. A calculator appears in the bottom-right corner.
 3. You add hour cells with Ctrl+Click (Windows/Linux) or ⌘+Click (macOS).
 4. The panel lists each cell, parses it, and updates the total immediately.
-5. You copy the total minutes, the hours-and-minutes line, or a short report.
+5. The copy icon places the total on the clipboard as `145 minutes (2.42 hours)`.
 
 Example:
 
@@ -23,14 +23,8 @@ Example:
 | 0.25 | 0h 25m | 25 |
 | 0.10 | 0h 10m | 10 |
 | **Total** | **2h 25m** | **145** |
-| Decimal hours | 145 ÷ 60 | **2.42** |
 
-These three forms are always labeled separately:
-
-- Spreadsheet `HH.MM`: `2.15` would mean 2 hours 15 minutes
-- Duration: `2h 15m`
-- Decimal hours: `2.25`
-- Minutes: `135 minutes`
+The panel shows minutes and `2h 25m`. It does not show decimal hours.
 
 ## Browser and site
 
@@ -58,19 +52,11 @@ There is no build step.
    - Windows / Linux: **Ctrl + Click**
    - macOS: **⌘ + Click**
 5. Modifier-click the same cell again to remove it.
-6. Use **×** on a row to remove that cell, **Clear All** to empty the list, or **Stop** to turn the extension off.
-7. The header **×** minimizes the panel to a small `STC` chip. Click the chip to open it again. Selection mode stays on.
-8. **Pause** keeps the panel open but ignores new clicks. **Resume** turns selection back on.
-9. **Add active cell** adds whatever cell is currently selected. Use this if a click is not detected.
+6. The selected values appear on one line, like `0.17 + 0.12 + 0.03`. The large number under that line is total minutes.
+7. The bottom-right controls are reload (clear), × (turn the extension off), copy, and **Add to Revision**. Copy places `236 minutes (3.93 hours)` on the clipboard. Add to Revision opens the [detailed report](https://report-generator-pearl-two.vercel.app/detailed-report) and, after you dismiss any name prompt, types the total minutes into Revision and presses Enter.
+8. Click the chip to open the panel again. × on the chip turns the extension off.
+9. Each cell chip has **×** to remove that value.
 10. Optional shortcut: **Alt+Shift+S** toggles the extension. Change it in `chrome://extensions/shortcuts`.
-
-Copy buttons:
-
-| Button | Clipboard |
-| --- | --- |
-| Copy Minutes | `145` |
-| Copy Time | `145 minutes (2h 25m)` |
-| Copy Report | Sheet name, each cell, total, and decimal hours |
 
 ## Time format
 
@@ -83,7 +69,8 @@ Hours are the digits before the decimal point. Minutes are the digits after it.
 | `0.03` | 3 minutes |
 | `1` or `1.0` | 1h 0m = 60 minutes |
 | `0` | 0 minutes |
-| `1.60`, `1.75`, `0.75` | Invalid. Shown with a warning and excluded from the total |
+| `0.67` | 67 minutes = 1h 7m |
+| `1.75` | 1h 75m = 2h 15m = 135 minutes |
 | `Completed`, blank | Not added |
 
 ### Trailing zeros
@@ -102,7 +89,7 @@ On the source workbook, single-digit minutes are already written with a leading 
 
 The panel shows the interpretation (`2.4 → 2h 40m`) so you can remove a cell if it was not what you meant.
 
-Minutes of 60 or more are never silently converted. `1.75` stays in the list with **Invalid time format: 1.75** and is left out of the total.
+A minute part of 60 or more is still counted. `0.67` is 67 minutes, shown as `1h 7m` and included in the total. Words such as `Completed` stay out of the total.
 
 ## Privacy and security
 
@@ -134,7 +121,7 @@ Changing to another sheet tab clears the selection. Cells from two sheets are no
 
 - Only single cells are accepted. A dragged range (`H150:H160`) or a whole column is ignored.
 - Formula results are not visible in the formula bar, and the extension will not copy the clipboard to discover them.
-- Very fast modifier-clicks can collapse into the last cell, because Sheets only exposes the active cell after each click. Pause briefly between clicks, or use **Add active cell**.
+- Very fast modifier-clicks can collapse into the last cell, because Sheets only exposes the active cell after each click. Pause briefly between clicks.
 - The name box and formula bar are the supported reading path. If a future Sheets UI removes them, selection will report that the cell could not be read.
 - The live Google Sheet linked during development required a sign-in, so the time rules were checked against the downloaded workbook’s September man-hour columns (values such as `0.08`, `0.17`, `1.25`, and `2.4`).
 
@@ -180,9 +167,9 @@ Clicking the extension icon activates an inactive session and deactivates an act
 | What you see | What to try |
 | --- | --- |
 | Icon click does nothing | Confirm the tab URL starts with `https://docs.google.com/spreadsheets/`. Reload the sheet after installing. |
-| “Could not read this cell.” | Click the cell, then press **Add active cell**. If the formula bar shows `=...`, select the source hour cell instead. |
+| “Could not read this cell.” | Click the cell again. If the formula bar shows `=...`, select the source hour cell instead. |
 | A value looks wrong | Read the row’s `value → duration` line. Remove it with × if Sheets dropped a zero you did not intend. |
-| `Invalid time format: 1.75` | The minutes part is 75. The cell is excluded until you remove it or fix the sheet. |
-| Panel is in the way | Drag the header, or press × to minimize. **Stop** removes it. |
+| `0.67` looks too large | `0.67` is 67 minutes (`1h 7m`), not 0.67 decimal hours. |
+| Panel is in the way | Drag the header, or press the close icon. × on the chip turns it off. |
 | Selection disappeared | Switching sheet tabs clears it on purpose. |
-| Styles look like Google’s UI | Reload the extension. The panel should be a dark terminal-style card, isolated in shadow DOM. |
+| Styles look like Google’s UI | Reload the extension. The panel is a light neomorphic card, isolated in shadow DOM. |

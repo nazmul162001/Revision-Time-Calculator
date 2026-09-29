@@ -86,6 +86,10 @@ export const SheetAdapter = Object.freeze({
   isGoogleSheets,
   getActiveCell,
   getCellValue,
+  readNameBoxText,
+  parseSelectionLabel,
+  clickedCellAddress,
+  focusCell,
   getCurrentSheetName,
   getCurrentSheetId,
   getSheetKey,
@@ -276,16 +280,120 @@ export function columnLettersToIndex(letters) {
  * @returns {{ cellAddress: string, column: number, row: number } | null}
  */
 function readActiveAddress() {
-  const fromAria = readAriaAddress();
-  if (fromAria) {
-    return fromAria;
+  const fromNameBox = parseSelectionLabel(readNameBoxText());
+  if (fromNameBox?.kind === "cell") {
+    return fromNameBox;
   }
+  return readAriaAddress();
+}
+
+/**
+ * Raw name-box text, including a range such as "M644:M645".
+ *
+ * @returns {string}
+ */
+export function readNameBoxText() {
   const nameBox = queryFirst(NAME_BOX_SELECTORS);
   if (!nameBox) {
-    return null;
+    return "";
   }
   const value = "value" in nameBox ? String(nameBox.value || "") : (nameBox.textContent || "");
-  return parseCellAddress(value);
+  return value.trim();
+}
+
+/**
+ * A single cell, or the two corners of a name-box range.
+ * Sheets writes a vertical drag from M644 onto M645 as "M644:M645".
+ *
+ * @param {string} input
+ * @returns {{ kind: "cell", cellAddress: string, column: number, row: number }
+ *   | { kind: "range", start: { cellAddress: string, column: number, row: number }, end: { cellAddress: string, column: number, row: number } }
+ *   | null}
+ */
+export function parseSelectionLabel(input) {
+  if (!input) {
+    return null;
+  }
+  let text = String(input).trim();
+  const bang = text.lastIndexOf("!");
+  if (bang !== -1) {
+    text = text.slice(bang + 1);
+  }
+  text = text.replace(/\$/g, "").trim();
+  const range = /^([A-Z]+\d+)\s*:\s*([A-Z]+\d+)$/i.exec(text);
+  if (range) {
+    const start = parseCellAddress(range[1]);
+    const end = parseCellAddress(range[2]);
+    if (!start || !end) {
+      return null;
+    }
+    return { kind: "range", start, end };
+  }
+  const cell = parseCellAddress(text);
+  return cell ? { kind: "cell", ...cell } : null;
+}
+
+/**
+ * Which cell a click was aiming at. A press on the row under the active cell
+ * often lands in the name box as "M644:M645"; the new cell is the other corner.
+ *
+ * @param {string} label
+ * @param {string} beforeAddress
+ * @returns {string}
+ */
+export function clickedCellAddress(label, beforeAddress) {
+  const named = parseSelectionLabel(label);
+  if (!named) {
+    return "";
+  }
+  if (named.kind === "cell") {
+    return named.cellAddress;
+  }
+  const start = named.start.cellAddress;
+  const end = named.end.cellAddress;
+  if (beforeAddress && start === beforeAddress && end !== beforeAddress) {
+    return end;
+  }
+  if (beforeAddress && end === beforeAddress && start !== beforeAddress) {
+    return start;
+  }
+  return end;
+}
+
+/**
+ * Move the Sheets selection to one cell. Used when a click on the next row
+ * leaves the name box on a two-cell range, so the formula bar still shows
+ * the previous cell.
+ *
+ * @param {string} address
+ * @returns {boolean}
+ */
+export function focusCell(address) {
+  const nameBox = queryFirst(NAME_BOX_SELECTORS);
+  if (!(nameBox instanceof HTMLInputElement) || !address) {
+    return false;
+  }
+  try {
+    nameBox.focus();
+    nameBox.select();
+    const inserted = document.execCommand("insertText", false, address);
+    if (!inserted) {
+      nameBox.value = address;
+      nameBox.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    nameBox.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true,
+    }));
+    nameBox.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -8,7 +8,7 @@ import {
   minutesToDecimalHours,
   sumMinutes,
 } from "../src/content/calculator.js";
-import { parseCellAddress } from "../src/content/cell-reader.js";
+import { parseCellAddress, clickedCellAddress, parseSelectionLabel } from "../src/content/cell-reader.js";
 import { createSelectionManager, selectionKey } from "../src/content/selection-manager.js";
 import { isGoogleSheets } from "../src/content/sheet-detector.js";
 import { parseTimeToMinutes } from "../src/content/time-parser.js";
@@ -38,11 +38,17 @@ test("treats a single decimal digit as a dropped trailing zero", () => {
   assert.equal(parseTimeToMinutes("2.5").totalMinutes, 170);
 });
 
-test("rejects minutes of 60 or more and non-time text", () => {
-  assert.equal(parseTimeToMinutes("1.60").status, "invalid");
-  assert.equal(parseTimeToMinutes("1.75").status, "invalid");
-  assert.equal(parseTimeToMinutes("0.75").status, "invalid");
-  assert.equal(parseTimeToMinutes("1.75").message, "Invalid time format: 1.75");
+test("carries minute parts of 60 or more into the total", () => {
+  assert.equal(parseTimeToMinutes("0.67").status, "ok");
+  assert.equal(parseTimeToMinutes("0.67").totalMinutes, 67);
+  assert.equal(formatHoursMinutes(parseTimeToMinutes("0.67").totalMinutes), "1h 7m");
+  assert.equal(parseTimeToMinutes("0.75").totalMinutes, 75);
+  assert.equal(parseTimeToMinutes("1.60").totalMinutes, 120);
+  assert.equal(parseTimeToMinutes("1.75").totalMinutes, 135);
+  assert.equal(formatHoursMinutes(parseTimeToMinutes("1.75").totalMinutes), "2h 15m");
+});
+
+test("rejects non-time text", () => {
   assert.equal(parseTimeToMinutes("abc").status, "invalid");
   assert.equal(parseTimeToMinutes("Completed").status, "invalid");
   assert.equal(parseTimeToMinutes("").status, "ignore");
@@ -58,7 +64,8 @@ test("sums minutes and formats every representation separately", () => {
   assert.equal(formatHoursMinutes(135), "2h 15m");
   assert.equal(minutesToDecimalHours(135), 2.25);
   assert.equal(formatDecimalHours(135), "2.25");
-  assert.equal(formatCopyTime(135), "135 minutes (2h 15m)");
+  assert.equal(formatCopyTime(135), "135 minutes (2.25 hours)");
+  assert.equal(formatCopyTime(236), "236 minutes (3.93 hours)");
 });
 
 test("formats the product example as 145 minutes, 2h 25m, 2.42 decimal hours", () => {
@@ -106,6 +113,13 @@ test("toggles a cell and refuses a duplicate key", () => {
   selection.toggle({ ...entry, key: selectionKey("999", "H150"), sheetId: "999", sheetName: "October" });
   assert.equal(selection.list().length, 1);
   assert.equal(selection.list()[0].sheetName, "October");
+});
+
+test("treats a click on the next row as the other cell in the name-box range", () => {
+  assert.equal(parseSelectionLabel("M644:M645")?.kind, "range");
+  assert.equal(clickedCellAddress("M644:M645", "M644"), "M645");
+  assert.equal(clickedCellAddress("September!$M$644:$M$645", "M645"), "M644");
+  assert.equal(clickedCellAddress("M644", "M643"), "M644");
 });
 
 test("parses A1 addresses without reading the grid", () => {

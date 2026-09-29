@@ -22,7 +22,6 @@ import { COPY_FEEDBACK_MS, PANEL_DEFAULTS, ROOT_ID } from "../shared/constants.j
  * @property {PanelItem[]} items
  * @property {number} totalMinutes
  * @property {string} hoursLabel
- * @property {string} decimalLabel
  * @property {number} invalidCount
  * @property {string} statusText
  * @property {"info" | "warn" | "error" | ""} statusTone
@@ -162,11 +161,8 @@ export async function createFloatingPanel(options) {
     if (!prefs) {
       return;
     }
-    if (typeof prefs.width === "number") {
-      panel.style.width = `${prefs.width}px`;
-    }
-    if (typeof prefs.height === "number") {
-      panel.style.height = `${prefs.height}px`;
+    if (typeof prefs.width === "number" && prefs.width >= 460) {
+      panel.style.width = `${Math.min(prefs.width, 720)}px`;
     }
     if (typeof prefs.left === "number" && typeof prefs.top === "number") {
       place(prefs.left, prefs.top);
@@ -203,30 +199,22 @@ export async function createFloatingPanel(options) {
       return;
     }
 
+    const paused = next.mode === "paused";
     setText(panel, "[data-field='sheet']", next.sheetName || "Sheet");
-    setText(panel, "[data-field='mode']", next.mode === "active" ? "Selection live" : "Selection off");
-    panel.querySelector(".stc-pip")?.classList.toggle("is-on", next.mode === "active");
-    setText(panel, "[data-field='hint']", next.hint);
-    setText(panel, "[data-field='empty']", "Nothing selected yet.");
-    setText(panel, "[data-field='candidate']", next.candidateText || "No active cell yet");
+    setText(panel, "[data-field='mode']", paused ? "Paused" : next.hint);
+    panel.querySelector(".stc-pip")?.classList.toggle("is-on", !paused);
 
-    const pause = panel.querySelector(".stc-pause");
-    if (pause) {
-      const paused = next.mode === "paused";
-      pause.textContent = paused ? "Resume" : "Pause";
-      pause.setAttribute("aria-pressed", paused ? "true" : "false");
-      pause.dataset.action = paused ? "resume" : "pause";
+    const candidate = panel.querySelector("[data-field='candidate']");
+    if (candidate) {
+      const text = next.candidateText && next.candidateText !== "No active cell yet" ? next.candidateText : "";
+      candidate.hidden = !text;
+      candidate.textContent = text;
     }
 
-    const count = panel.querySelector("[data-field='count']");
-    if (count) {
-      count.textContent = String(next.items.length);
-    }
-
+    renderExpression(next.items);
     renderItems(next.items);
-    setText(panel, "[data-field='minutes']", `${next.totalMinutes} minutes`);
+    setText(panel, "[data-field='minutes']", String(next.totalMinutes));
     setText(panel, "[data-field='hours']", next.hoursLabel);
-    setText(panel, "[data-field='decimal']", `${next.decimalLabel} decimal hours`);
 
     const invalid = panel.querySelector("[data-field='invalid']");
     if (invalid) {
@@ -247,52 +235,71 @@ export async function createFloatingPanel(options) {
   /**
    * @param {PanelItem[]} items
    */
-  function renderItems(items) {
-    const list = panel.querySelector("[data-field='list']");
-    const empty = panel.querySelector("[data-field='empty']");
-    if (!list || !empty) {
+  function renderExpression(items) {
+    const expr = panel.querySelector("[data-field='expr']");
+    if (!expr) {
       return;
     }
-    const scroll = list.scrollTop;
+    expr.replaceChildren();
+    if (!items.length) {
+      const zero = document.createElement("span");
+      zero.className = "stc-term is-zero";
+      zero.textContent = "0";
+      expr.append(zero);
+      return;
+    }
+    items.forEach((item, index) => {
+      if (index > 0) {
+        const plus = document.createElement("span");
+        plus.className = "stc-plus";
+        plus.textContent = "+";
+        expr.append(plus);
+      }
+      const term = document.createElement("span");
+      term.className = item.invalid ? "stc-term is-invalid" : "stc-term";
+      term.textContent = item.rawValue;
+      term.title = item.invalid
+        ? `${item.cellAddress}: ${item.message}`
+        : `${item.cellAddress} → ${item.parsedLabel}`;
+      expr.append(term);
+    });
+  }
+
+  /**
+   * @param {PanelItem[]} items
+   */
+  function renderItems(items) {
+    const list = panel.querySelector("[data-field='list']");
+    if (!list) {
+      return;
+    }
     list.replaceChildren();
-    empty.hidden = items.length !== 0;
     list.hidden = items.length === 0;
 
     for (const item of items) {
       const row = document.createElement("li");
-      row.className = item.invalid ? "stc-item is-invalid" : "stc-item";
+      row.className = item.invalid ? "stc-token is-invalid" : "stc-token";
+      row.title = item.invalid ? item.message : `${item.rawValue} → ${item.parsedLabel}`;
 
-      const body = document.createElement("div");
-      body.className = "stc-item-body";
-
-      const top = document.createElement("div");
-      top.className = "stc-item-top";
       const address = document.createElement("span");
       address.className = "stc-address";
       address.textContent = item.cellAddress;
+
       const raw = document.createElement("span");
       raw.className = "stc-raw";
       raw.textContent = item.rawValue;
-      top.append(address, raw);
-
-      const detail = document.createElement("div");
-      detail.className = "stc-detail";
-      detail.textContent = item.invalid ? item.message : `${item.rawValue} → ${item.parsedLabel}`;
-
-      body.append(top, detail);
 
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.className = "stc-icon-button";
+      remove.className = "stc-token-x";
       remove.dataset.action = "remove";
       remove.dataset.key = item.key;
       remove.setAttribute("aria-label", `Remove ${item.cellAddress}`);
       remove.textContent = "×";
 
-      row.append(body, remove);
+      row.append(address, raw, remove);
       list.append(row);
     }
-    list.scrollTop = scroll;
   }
 
   /**
@@ -301,16 +308,21 @@ export async function createFloatingPanel(options) {
    */
   function flash(action, label) {
     const button = panel.querySelector(`[data-action='${action}']`);
-    if (!(button instanceof HTMLButtonElement)) {
-      return;
+    const status = panel.querySelector("[data-field='status']");
+    if (button instanceof HTMLButtonElement) {
+      button.classList.add("is-copied");
     }
-    const original = button.dataset.label || button.textContent || "";
-    button.dataset.label = original;
-    button.textContent = label;
-    button.classList.add("is-copied");
+    if (status) {
+      status.hidden = false;
+      status.dataset.tone = label === "Copied!" ? "info" : "error";
+      status.textContent = label;
+    }
     const timer = window.setTimeout(() => {
-      button.textContent = original;
-      button.classList.remove("is-copied");
+      button?.classList.remove("is-copied");
+      if (status && status.textContent === label) {
+        status.hidden = true;
+        status.textContent = "";
+      }
     }, COPY_FEEDBACK_MS);
     feedbackTimers.push(timer);
   }
@@ -359,49 +371,80 @@ function buildPanel(hint) {
         <span class="stc-pip is-on" aria-hidden="true"></span>
         <div>
           <div class="stc-title">Sheet Time Calculator</div>
-          <div class="stc-subtitle"><span data-field="sheet">Sheet</span> · <span data-field="mode">Selection live</span></div>
+          <div class="stc-subtitle"><span data-field="sheet">Sheet</span> · <span data-field="mode"></span></div>
         </div>
-      </div>
-      <div class="stc-header-actions">
-        <button type="button" class="stc-text-button stc-pause" data-action="pause" aria-pressed="false">Pause</button>
-        <button type="button" class="stc-icon-button" data-action="minimize" aria-label="Minimize calculator">×</button>
       </div>
     </header>
     <div class="stc-body">
-      <p class="stc-hint" data-field="hint"></p>
-      <button type="button" class="stc-add" data-action="add-active">Add active cell</button>
-      <div class="stc-candidate" data-field="candidate">No active cell yet</div>
-      <div class="stc-section-label">Selected <span data-field="count">0</span></div>
-      <p class="stc-empty" data-field="empty"></p>
-      <ul class="stc-list" data-field="list" hidden></ul>
-      <p class="stc-invalid" data-field="invalid" hidden></p>
-      <div class="stc-total">
-        <div class="stc-kicker">Total minutes</div>
-        <div class="stc-minutes" data-field="minutes">0 minutes</div>
-        <div class="stc-hours" data-field="hours">0h 0m</div>
-        <div class="stc-decimal"><span data-field="decimal">0.00 decimal hours</span></div>
+      <div class="stc-lcd" aria-live="polite">
+        <div class="stc-expr" data-field="expr"></div>
+        <div class="stc-readout"><span data-field="minutes">0</span><span class="stc-unit">minutes</span></div>
+        <div class="stc-meta"><span data-field="hours">0h 0m</span></div>
       </div>
-      <div class="stc-copies">
-        <button type="button" class="stc-primary" data-action="copy-minutes">Copy Minutes</button>
-        <button type="button" class="stc-primary" data-action="copy-time">Copy Time</button>
-        <button type="button" class="stc-ghost" data-action="copy-report">Copy Report</button>
+      <p class="stc-candidate" data-field="candidate" hidden></p>
+      <ul class="stc-tokens" data-field="list" hidden></ul>
+      <p class="stc-invalid" data-field="invalid" hidden></p>
+      <div class="stc-tools">
+        <button type="button" class="stc-tool is-clear" data-action="clear" aria-label="Clear" title="Clear"></button>
+        <button type="button" class="stc-tool is-close" data-action="stop" aria-label="Close" title="Close"></button>
+        <button type="button" class="stc-tool is-copy" data-action="copy-time" aria-label="Copy" title="Copy"></button>
+        <button type="button" class="stc-revision" data-action="add-revision">Add to Revision</button>
       </div>
       <p class="stc-status" data-field="status" role="status" hidden></p>
-      <div class="stc-footer">
-        <button type="button" class="stc-text-button" data-action="clear">Clear All</button>
-        <button type="button" class="stc-stop" data-action="stop">Stop</button>
-      </div>
     </div>
   `;
-  const hintNode = panel.querySelector("[data-field='hint']");
-  const emptyNode = panel.querySelector("[data-field='empty']");
-  if (hintNode) {
-    hintNode.textContent = hint;
-  }
-  if (emptyNode) {
-    emptyNode.textContent = "Nothing selected yet.";
+  panel.querySelector("[data-action='clear']")?.append(svgIcon("reload"));
+  panel.querySelector("[data-action='stop']")?.append(svgIcon("close"));
+  panel.querySelector("[data-action='copy-time']")?.append(svgIcon("copy"));
+  const modeNode = panel.querySelector("[data-field='mode']");
+  if (modeNode) {
+    modeNode.textContent = hint;
   }
   return panel;
+}
+
+/**
+ * @param {string} name
+ * @returns {SVGElement}
+ */
+function svgIcon(name) {
+  const tones = {
+    reload: ["#ff5ea8", "#7b5cff"],
+    close: ["#ffe14a", "#ff7a1a"],
+    copy: ["#5af0ff", "#3aa0ff"],
+  };
+  const strokes = {
+    reload: ["M20 12a8 8 0 1 1-2.2-5.5", "M20 4v5h-5"],
+    close: ["M7 7l10 10", "M17 7L7 17"],
+    copy: [
+      "M9 9h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V11a2 2 0 0 1 2-2z",
+      "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
+    ],
+  };
+  const [from, to] = tones[name] || tones.copy;
+  const id = `stc-grad-${name}`;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="${from}"/>
+        <stop offset="1" stop-color="${to}"/>
+      </linearGradient>
+    </defs>
+  `;
+  for (const d of strokes[name] || strokes.copy) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", `url(#${id})`);
+    path.setAttribute("stroke-width", "1.8");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.append(path);
+  }
+  return svg;
 }
 
 function buildChip() {
@@ -447,7 +490,7 @@ function clamp(value, min, max) {
 
 function fallbackCss() {
   return `
-    .stc-panel { width: 320px; background: #080d12; color: #d7ffe9; font: 13px/1.4 ui-monospace, monospace; border: 1px solid #3effb0; border-radius: 12px; pointer-events: auto; }
+    .stc-panel { width: 520px; background: #1c1e22; color: #eceae6; font: 13px/1.4 system-ui, sans-serif; border-radius: 28px; pointer-events: auto; }
     .stc-header, .stc-footer, .stc-copies { display: flex; gap: 8px; justify-content: space-between; }
     button { font: inherit; }
   `;

@@ -66,11 +66,11 @@ export function formatDecimalHours(totalMinutes) {
  * Primary clipboard format. Minutes come first because that is what gets submitted.
  *
  * @param {number} totalMinutes
- * @returns {string} Example: "135 minutes (2h 15m)"
+ * @returns {string} Example: "236 minutes (3.93 hours)"
  */
 export function formatCopyTime(totalMinutes) {
   const safe = normalizeMinutes(totalMinutes);
-  return `${safe} minutes (${formatHoursMinutes(safe)})`;
+  return `${safe} minutes (${formatDecimalHours(safe)} hours)`;
 }
 
 /**

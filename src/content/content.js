@@ -4,12 +4,12 @@ import {
   CELL_READ_DELAYS_MS,
   EXTENSION_MODES,
   MESSAGE_TYPES,
+  REVISION_REPORT_URL,
   STATUS_CLEAR_MS,
   STORAGE_KEYS,
 } from "../shared/constants.js";
 import {
   formatCopyTime,
-  formatDecimalHours,
   formatHoursMinutes,
   formatReport,
   sumMinutes,
@@ -46,6 +46,8 @@ function boot() {
   let saveTimer = 0;
   let toggleToken = 0;
   let candidateToken = 0;
+  /** @type {import("./cell-reader.js").ActiveCellInfo | null} */
+  let pointerBefore = null;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     handleMessage(message)
@@ -149,6 +151,7 @@ function boot() {
     if (gridBound) {
       return;
     }
+    document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("click", onGridClick, true);
     gridBound = true;
   }
@@ -157,8 +160,29 @@ function boot() {
     if (!gridBound) {
       return;
     }
+    document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("click", onGridClick, true);
     gridBound = false;
+  }
+
+  /**
+   * Captured before Sheets handles the press, so a click on the row below
+   * still knows which cell was active. Sheets often turns that press into
+   * a two-cell range such as M644:M645.
+   *
+   * @param {PointerEvent} event
+   */
+  function onPointerDown(event) {
+    if (mode !== EXTENSION_MODES.ACTIVE || event.button !== 0) {
+      return;
+    }
+    if (panel?.host && event.composedPath().includes(panel.host)) {
+      return;
+    }
+    if (!SheetAdapter.isGridTarget(event)) {
+      return;
+    }
+    pointerBefore = SheetAdapter.getActiveCell();
   }
 
   /**
@@ -202,21 +226,74 @@ function boot() {
    * @param {"toggle" | "candidate"} kind
    */
   async function readAfterSheetsUpdates(token, kind) {
+    const beforeAddress = pointerBefore?.cellAddress || "";
+    const beforeRaw = pointerBefore?.rawValue ?? "";
     let latest = null;
+    /** @type {string} */
+    let focused = "";
+    let sawRange = false;
+    /** @type {{ address: string, raw: string, hits: number } | null} */
+    let repeat = null;
+
     for (const step of CELL_READ_DELAYS_MS) {
       await wait(step);
       if (!isCurrentRead(token, kind)) {
         return;
       }
+
+      const named = SheetAdapter.parseSelectionLabel(SheetAdapter.readNameBoxText());
+      if (named?.kind === "range") {
+        sawRange = true;
+        const target = SheetAdapter.clickedCellAddress(SheetAdapter.readNameBoxText(), beforeAddress);
+        if (target && focused !== target) {
+          SheetAdapter.focusCell(target);
+          focused = target;
+        }
+        continue;
+      }
+
       const info = SheetAdapter.getActiveCell();
-      if (info?.cellAddress) {
+      if (!info?.cellAddress || info.readError === "no-value") {
+        continue;
+      }
+      if (focused && info.cellAddress !== focused) {
+        continue;
+      }
+
+      const changed = Boolean(beforeAddress) && info.cellAddress !== beforeAddress;
+      const sameRead = repeat
+        && repeat.address === info.cellAddress
+        && repeat.raw === info.rawValue;
+      repeat = {
+        address: info.cellAddress,
+        raw: info.rawValue,
+        hits: sameRead ? repeat.hits + 1 : 1,
+      };
+
+      if (!changed) {
+        if (focused && info.cellAddress === focused && info.rawValue !== "") {
+          latest = info;
+          break;
+        }
+        if (!sawRange) {
+          latest = info;
+        }
+        continue;
+      }
+
+      const formulaSettled = info.rawValue !== "" && info.rawValue !== beforeRaw;
+      const lastStep = step === CELL_READ_DELAYS_MS[CELL_READ_DELAYS_MS.length - 1];
+      if (formulaSettled || (lastStep && info.rawValue !== "" && repeat.hits >= 2)) {
         latest = info;
+        break;
       }
     }
+
     if (!isCurrentRead(token, kind)) {
       return;
     }
-    if (!latest) {
+    const stuckOnPrevious = Boolean(latest) && latest.cellAddress === beforeAddress && (sawRange || focused);
+    if (!latest || stuckOnPrevious) {
       setStatus("Could not read this cell.", "error");
       render();
       return;
@@ -407,12 +484,41 @@ function boot() {
       case "copy-time":
         await copyAndFlash("copy-time", formatCopyTime(currentTotal()));
         break;
+      case "add-revision":
+        await addToRevision();
+        break;
       case "copy-report":
         await copyAndFlash("copy-report", buildReport());
         break;
       default:
         break;
     }
+  }
+
+  async function addToRevision() {
+    const minutes = currentTotal();
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      setStatus("Add a time before sending it to Revision.", "warn");
+      render();
+      return;
+    }
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.REVISION_MINUTES]: {
+        minutes,
+        requestedAt: Date.now(),
+      },
+    });
+    const opened = await chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.OPEN_REVISION,
+      url: REVISION_REPORT_URL,
+      minutes,
+    }).catch(() => null);
+    if (!opened?.ok) {
+      setStatus("Could not open the report page.", "error");
+      render();
+      return;
+    }
+    deactivate();
   }
 
   function addActive() {
@@ -476,7 +582,6 @@ function boot() {
       items: items.map(toPanelItem),
       totalMinutes: total,
       hoursLabel: formatHoursMinutes(total),
-      decimalLabel: formatDecimalHours(total),
       invalidCount: items.filter((item) => item.parse.status !== "ok").length,
       statusText,
       statusTone,

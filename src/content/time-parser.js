@@ -1,7 +1,5 @@
 "use strict";
 
-import { MAX_MINUTE_PART } from "../shared/constants.js";
-
 /**
  * @typedef {Object} ParseResult
  * @property {"ok" | "invalid" | "ignore" | "unreadable"} status
@@ -34,7 +32,9 @@ const TIME_PATTERN = /^(\d{1,6})(?:\.(\d{1,2}))?$/;
  * Two fractional digits are used as written. This matches the source sheet,
  * where 5 minutes is entered as 0.05 (not 0.5).
  *
- * Minutes 60 or above are invalid. "1.75" and "0.75" are not calculated.
+ * A minute part of 60 or more is real time and is carried into hours:
+ *   "0.67" → 67 minutes → 1h 7m
+ *   "1.75" → 1h 75m → 2h 15m
  *
  * @param {unknown} value
  * @returns {ParseResult}
@@ -78,7 +78,7 @@ export function parseTimeToMinutes(value) {
     };
   }
 
-  const hours = Number(match[1]);
+  let hours = Number(match[1]);
   const fraction = match[2];
   let minutes = 0;
   let padded = false;
@@ -96,16 +96,9 @@ export function parseTimeToMinutes(value) {
     return invalidFormat(raw);
   }
 
-  if (minutes > MAX_MINUTE_PART) {
-    return {
-      status: "invalid",
-      raw,
-      kind: "minutes",
-      hours,
-      minutes,
-      padded,
-      message: `Invalid time format: ${raw}`,
-    };
+  if (minutes >= 60) {
+    hours += Math.floor(minutes / 60);
+    minutes %= 60;
   }
 
   return {

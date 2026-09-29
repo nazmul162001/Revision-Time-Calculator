@@ -24,7 +24,10 @@
     "type": "module"
   },
   "permissions": ["storage", "scripting", "activeTab"],
-  "host_permissions": ["https://docs.google.com/spreadsheets/*"],
+  "host_permissions": [
+    "https://docs.google.com/spreadsheets/*",
+    "https://report-generator-pearl-two.vercel.app/*"
+  ],
   "content_scripts": [
     {
       "matches": ["https://docs.google.com/spreadsheets/*"],

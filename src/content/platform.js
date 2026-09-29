@@ -11,11 +11,11 @@ export function detectPlatform() {
   ];
   const raw = sources.filter(Boolean).join(" ");
   const mac = /Mac|iPhone|iPad|iPod/i.test(raw);
-  const modifierLabel = mac ? "⌘" : "Ctrl";
+  const modifierLabel = mac ? "Cmd" : "Ctrl";
   return {
     mac,
     modifierLabel,
-    hint: mac ? "⌘ + Click to add or remove" : "Ctrl + Click to add or remove",
+    hint: mac ? "Cmd + click to add or remove" : "Ctrl + click to add or remove",
   };
 }
 

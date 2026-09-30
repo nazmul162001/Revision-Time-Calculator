@@ -54,10 +54,9 @@ button:focus-visible {
 
 .stc-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 16px 8px 20px;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 14px 8px 18px;
   cursor: grab;
   user-select: none;
 }
@@ -70,7 +69,7 @@ button:focus-visible {
   width: 42px;
   height: 42px;
   flex: none;
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .stc-header .stc-tool.is-close svg {
@@ -82,6 +81,11 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.stc-brand > div {
   min-width: 0;
 }
 
@@ -106,6 +110,9 @@ button:focus-visible {
   font-size: 15px;
   font-weight: 650;
   letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stc-subtitle {
@@ -115,6 +122,40 @@ button:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.stc-cats {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: none;
+}
+
+.stc-cat {
+  height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--stc-bg);
+  color: var(--stc-muted);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  box-shadow: var(--stc-raised-sm);
+}
+
+.stc-cat:hover {
+  color: var(--stc-text);
+}
+
+.stc-cat.is-selected {
+  color: #5af0ff;
+  box-shadow:
+    inset 5px 5px 10px #08090b,
+    inset -3px -3px 8px #2c3038,
+    0 0 10px rgba(90, 240, 255, 0.16);
 }
 
 .stc-body {

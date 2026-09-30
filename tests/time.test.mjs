@@ -9,7 +9,7 @@ import {
   sumMinutes,
 } from "../src/content/calculator.js";
 import { parseCellAddress, clickedCellAddress, parseSelectionLabel } from "../src/content/cell-reader.js";
-import { createSelectionManager, selectionKey } from "../src/content/selection-manager.js";
+import { createSelectionManager } from "../src/content/selection-manager.js";
 import { isGoogleSheets } from "../src/content/sheet-detector.js";
 import { parseTimeToMinutes } from "../src/content/time-parser.js";
 
@@ -92,27 +92,16 @@ test("does not treat 1.17 as decimal hours", () => {
   assert.notEqual(parsed.totalMinutes, Math.round(1.17 * 60));
 });
 
-test("toggles a cell and refuses a duplicate key", () => {
+test("adds the same value more than once", () => {
   const selection = createSelectionManager();
-  const entry = {
-    key: selectionKey("1171127302", "H150"),
-    sheetId: "1171127302",
-    sheetName: "September",
-    cellAddress: "H150",
-    rawValue: "3.13",
-    row: 150,
-    column: 8,
-    parse: parseTimeToMinutes("3.13"),
-  };
-
-  assert.equal(selection.toggle(entry).action, "added");
-  assert.equal(selection.toggle(entry).action, "removed");
-  assert.equal(selection.list().length, 0);
-
-  selection.toggle(entry);
-  selection.toggle({ ...entry, key: selectionKey("999", "H150"), sheetId: "999", sheetName: "October" });
+  const parsed = parseTimeToMinutes("3.13");
+  selection.add("3.13", parsed);
+  selection.add("3.13", parsed);
+  assert.equal(selection.list().length, 2);
+  assert.equal(selection.list()[0].rawValue, "3.13");
+  assert.equal(selection.list()[1].rawValue, "3.13");
+  selection.remove(selection.list()[0].key);
   assert.equal(selection.list().length, 1);
-  assert.equal(selection.list()[0].sheetName, "October");
 });
 
 test("treats a click on the next row as the other cell in the name-box range", () => {

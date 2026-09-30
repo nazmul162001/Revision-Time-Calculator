@@ -3,68 +3,35 @@
 /**
  * @typedef {Object} SelectionEntry
  * @property {string} key
- * @property {string} sheetId
- * @property {string} sheetName
- * @property {string} cellAddress
  * @property {string} rawValue
- * @property {number | null} row
- * @property {number | null} column
  * @property {import("./time-parser.js").ParseResult} parse
  */
 
 /**
- * Session-only selection. The same sheet cell cannot be stored twice.
- * The key is sheet id + address, for example "1171127302:H150".
+ * Session-only list of times. The same value can be added again.
+ * Each entry has its own key so one number can be removed from the panel.
  */
 export function createSelectionManager() {
   /** @type {SelectionEntry[]} */
   let items = [];
-
-  /**
-   * @param {string} key
-   */
-  function findIndex(key) {
-    return items.findIndex((item) => item.key === key);
-  }
+  let nextId = 1;
 
   return {
     /**
      * @returns {SelectionEntry[]}
      */
     list() {
-      return items.slice();
+      return items;
     },
 
     /**
-     * @param {string} key
+     * @param {string} rawValue
+     * @param {import("./time-parser.js").ParseResult} parse
      */
-    has(key) {
-      return findIndex(key) !== -1;
-    },
-
-    /**
-     * Add the cell, or remove it when it is already selected.
-     * If the incoming cell belongs to another sheet, previous items are dropped
-     * first so two sheets are never mixed.
-     *
-     * @param {SelectionEntry} entry
-     * @returns {{ action: "added" | "removed", clearedOtherSheet: boolean }}
-     */
-    toggle(entry) {
-      let clearedOtherSheet = false;
-      if (items.length > 0 && items[0].sheetId !== entry.sheetId) {
-        items = [];
-        clearedOtherSheet = true;
-      }
-
-      const index = findIndex(entry.key);
-      if (index !== -1) {
-        items.splice(index, 1);
-        return { action: "removed", clearedOtherSheet };
-      }
-
-      items.push(entry);
-      return { action: "added", clearedOtherSheet };
+    add(rawValue, parse) {
+      const key = String(nextId);
+      nextId += 1;
+      items.push({ key, rawValue, parse });
     },
 
     /**
@@ -72,7 +39,7 @@ export function createSelectionManager() {
      * @returns {boolean}
      */
     remove(key) {
-      const index = findIndex(key);
+      const index = items.findIndex((item) => item.key === key);
       if (index === -1) {
         return false;
       }
@@ -84,13 +51,4 @@ export function createSelectionManager() {
       items = [];
     },
   };
-}
-
-/**
- * @param {string} sheetId
- * @param {string} cellAddress
- * @returns {string}
- */
-export function selectionKey(sheetId, cellAddress) {
-  return `${sheetId}:${cellAddress}`;
 }

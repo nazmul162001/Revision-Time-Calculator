@@ -22,6 +22,8 @@ import { COPY_FEEDBACK_MS, PANEL_DEFAULTS, ROOT_ID } from "../shared/constants.j
  * @property {number} invalidCount
  * @property {string} statusText
  * @property {"info" | "warn" | "error" | ""} statusTone
+ * @property {string} category
+ * @property {string} addLabel
  */
 
 /**
@@ -64,6 +66,17 @@ export async function createFloatingPanel(options) {
   const panel = buildPanel(options.platform.hint);
   const chip = buildChip();
   shadow.append(panel, chip);
+
+  const exprNode = panel.querySelector("[data-field='expr']");
+  const minutesNode = panel.querySelector("[data-field='minutes']");
+  const hoursNode = panel.querySelector("[data-field='hours']");
+  const modeNode = panel.querySelector("[data-field='mode']");
+  const invalidNode = panel.querySelector("[data-field='invalid']");
+  const statusNode = panel.querySelector("[data-field='status']");
+  const addNode = panel.querySelector("[data-action='add-revision']");
+  const categoryNodes = panel.querySelectorAll("[data-action='category']");
+  const pipNode = panel.querySelector(".stc-pip");
+  const chipTextNode = chip.querySelector(".stc-chip-text");
 
   /** @type {PanelView | null} */
   let view = null;
@@ -183,75 +196,122 @@ export async function createFloatingPanel(options) {
    * @param {PanelView} next
    */
   function update(next) {
+    const previousItems = view?.items;
     view = next;
     minimized = next.minimized;
     host.hidden = false;
     panel.hidden = minimized;
     chip.hidden = !minimized;
     if (minimized) {
-      const chipText = chip.querySelector(".stc-chip-text");
-      if (chipText) {
-        chipText.textContent = next.mode === "active" ? `STC  ${next.totalMinutes}m` : "STC  paused";
+      if (chipTextNode) {
+        chipTextNode.textContent = next.mode === "active" ? `STC  ${next.totalMinutes}m` : "STC  paused";
       }
       return;
     }
 
     const paused = next.mode === "paused";
-    setText(panel, "[data-field='mode']", paused ? "Paused" : next.hint);
-    panel.querySelector(".stc-pip")?.classList.toggle("is-on", !paused);
+    if (modeNode) {
+      modeNode.textContent = paused ? "Paused" : next.hint;
+    }
+    pipNode?.classList.toggle("is-on", !paused);
 
-    renderExpression(next.items);
-    setText(panel, "[data-field='minutes']", String(next.totalMinutes));
-    setText(panel, "[data-field='hours']", next.hoursLabel);
+    renderExpression(next.items, previousItems);
+    if (minutesNode) {
+      minutesNode.textContent = String(next.totalMinutes);
+    }
+    if (hoursNode) {
+      hoursNode.textContent = next.hoursLabel;
+    }
 
-    const invalid = panel.querySelector("[data-field='invalid']");
-    if (invalid) {
-      invalid.hidden = next.invalidCount === 0;
-      invalid.textContent = next.invalidCount === 1
+    if (invalidNode) {
+      invalidNode.hidden = next.invalidCount === 0;
+      invalidNode.textContent = next.invalidCount === 1
         ? "1 invalid value excluded from the total"
         : `${next.invalidCount} invalid values excluded from the total`;
     }
 
-    const status = panel.querySelector("[data-field='status']");
-    if (status) {
-      status.textContent = next.statusText || "";
-      status.dataset.tone = next.statusTone || "";
-      status.hidden = !next.statusText;
+    if (statusNode) {
+      statusNode.textContent = next.statusText || "";
+      statusNode.dataset.tone = next.statusTone || "";
+      statusNode.hidden = !next.statusText;
+    }
+    if (addNode) {
+      addNode.textContent = next.addLabel || "Add to Revision";
+    }
+    for (let i = 0; i < categoryNodes.length; i += 1) {
+      const button = categoryNodes[i];
+      const selected = button.dataset.key === next.category;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
     }
   }
 
   /**
    * @param {PanelItem[]} items
+   * @param {PanelItem[] | undefined} previousItems
    */
-  function renderExpression(items) {
-    const expr = panel.querySelector("[data-field='expr']");
-    if (!expr) {
+  function renderExpression(items, previousItems) {
+    if (!exprNode) {
       return;
     }
-    expr.replaceChildren();
+    const addedOne = previousItems
+      && items.length === previousItems.length + 1
+      && prefixMatches(previousItems, items);
+    if (addedOne) {
+      appendTerm(items[items.length - 1], true);
+      return;
+    }
+    exprNode.replaceChildren();
     if (!items.length) {
       const zero = document.createElement("span");
       zero.className = "stc-term is-zero";
       zero.textContent = "0";
-      expr.append(zero);
+      exprNode.append(zero);
       return;
     }
-    items.forEach((item, index) => {
-      if (index > 0) {
-        const plus = document.createElement("span");
-        plus.className = "stc-plus";
-        plus.textContent = "+";
-        expr.append(plus);
+    for (let i = 0; i < items.length; i += 1) {
+      appendTerm(items[i], i > 0);
+    }
+  }
+
+  /**
+   * @param {PanelItem[]} previousItems
+   * @param {PanelItem[]} items
+   */
+  function prefixMatches(previousItems, items) {
+    for (let i = 0; i < previousItems.length; i += 1) {
+      if (previousItems[i].key !== items[i].key) {
+        return false;
       }
-      const term = document.createElement("button");
-      term.type = "button";
-      term.className = item.invalid ? "stc-term is-invalid" : "stc-term";
-      term.dataset.action = "remove";
-      term.dataset.key = item.key;
-      term.textContent = item.rawValue;
-      term.title = item.invalid ? item.message : (item.parsedLabel || item.rawValue);
-      expr.append(term);
-    });
+    }
+    return true;
+  }
+
+  /**
+   * @param {PanelItem} item
+   * @param {boolean} withPlus
+   */
+  function appendTerm(item, withPlus) {
+    if (!exprNode) {
+      return;
+    }
+    if (exprNode.querySelector(".is-zero")) {
+      exprNode.replaceChildren();
+    }
+    if (withPlus) {
+      const plus = document.createElement("span");
+      plus.className = "stc-plus";
+      plus.textContent = "+";
+      exprNode.append(plus);
+    }
+    const term = document.createElement("button");
+    term.type = "button";
+    term.className = item.invalid ? "stc-term is-invalid" : "stc-term";
+    term.dataset.action = "remove";
+    term.dataset.key = item.key;
+    term.textContent = item.rawValue;
+    term.title = item.invalid ? item.message : (item.parsedLabel || item.rawValue);
+    exprNode.append(term);
   }
 
   /**
@@ -325,6 +385,11 @@ function buildPanel(hint) {
           <div class="stc-title">Revision Time Calculator</div>
           <div class="stc-subtitle" data-field="mode"></div>
         </div>
+      </div>
+      <div class="stc-cats" role="group" aria-label="Report category">
+        <button type="button" class="stc-cat is-selected" data-action="category" data-key="revision" aria-pressed="true">Revision</button>
+        <button type="button" class="stc-cat" data-action="category" data-key="feedback" aria-pressed="false">Feedback</button>
+        <button type="button" class="stc-cat" data-action="category" data-key="checking" aria-pressed="false">Checking</button>
       </div>
       <button type="button" class="stc-tool is-close" data-action="stop" aria-label="Close" title="Close"></button>
     </header>
@@ -415,18 +480,6 @@ function buildChip() {
   close.textContent = "×";
   chip.append(restore, close);
   return chip;
-}
-
-/**
- * @param {ParentNode} root
- * @param {string} selector
- * @param {string} text
- */
-function setText(root, selector, text) {
-  const node = root.querySelector(selector);
-  if (node) {
-    node.textContent = text;
-  }
 }
 
 /**

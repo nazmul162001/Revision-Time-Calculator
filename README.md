@@ -10,7 +10,7 @@ The calculator is a floating panel inside the spreadsheet. It stays open while y
 
 1. You open a Google Sheet and click the extension icon.
 2. A calculator appears in the bottom-right corner.
-3. You add hour cells with Ctrl+Click (Windows/Linux) or ⌘+Click (macOS).
+3. You add hour cells with a single click.
 4. The panel shows those times on one line, like `0.17 + 0.12 + 0.03`, and updates the total immediately.
 5. The copy icon places the total on the clipboard as `145 minutes (2.42 hours)`.
 
@@ -24,7 +24,7 @@ Example:
 | 0.10 | 0h 10m | 10 |
 | **Total** | **2h 25m** | **145** |
 
-The panel shows minutes and `2h 25m`. It does not show decimal hours.
+The panel shows minutes and `2.42 hours`.
 
 ## Browser and site
 
@@ -47,10 +47,10 @@ There is no build step.
 
 1. Open the spreadsheet.
 2. Click the extension icon. The badge shows `ON`.
-3. Add an hour cell with Ctrl+Click (Windows/Linux) or ⌘+Click (macOS). A normal click leaves the calculator alone.
-4. Modifier-click the same cell again to remove it, or click that number in the panel.
+3. Click an hour cell to add its time. Shift+click and Alt+click stay with Google Sheets.
+4. Click the same value again to add it a second time. Click a number in the panel to remove that one entry.
 5. The selected times appear on one line, like `0.17 + 0.12 + 0.03`. The large number under that line is total minutes. Cell addresses are not shown.
-6. The controls are reload (clear), the top-right × (turn the extension off), copy, and **Add to Revision**. Copy places `236 minutes (3.93 hours)` on the clipboard. Add to Revision opens the [detailed report](https://report-generator-pearl-two.vercel.app/detailed-report) and, after you dismiss any name prompt, types the total minutes into Revision and presses Enter.
+6. Copy places `236 minutes (3.93 hours)` on the clipboard. The top buttons choose where the time goes: **Revision** (default), **Feedback**, or **Checking**. The bottom button follows that choice: **Add to Revision**, **Add Feedback**, or **Add Checking**. It opens the [detailed report](https://report-generator-pearl-two.vercel.app/detailed-report) and, after you dismiss any name prompt, types the total minutes into Revision, Feedback Response, or Review.
 7. Click the chip to open the panel again. × on the chip turns the extension off.
 8. Optional shortcut: **Alt+Shift+S** toggles the extension. Change it in `chrome://extensions/shortcuts`.
 
@@ -109,7 +109,7 @@ All of that logic is isolated in `src/content/cell-reader.js` (`SheetAdapter`). 
 
 The formula bar shows a formula, not its result. A cell such as `=H7+M7` cannot be totaled. Select the typed hour cells instead. The panel says **Could not read this cell** rather than guessing.
 
-Ctrl/⌘+Click is not cancelled, so Sheets keeps its own selection behavior. The extension keeps a separate list.
+A normal click is not cancelled, so Sheets keeps its own selection behavior. The extension keeps a separate list.
 
 Changing to another sheet tab clears the selection. Cells from two sheets are not mixed.
 

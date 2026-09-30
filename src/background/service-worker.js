@@ -25,7 +25,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const url = typeof message.url === "string" && message.url.startsWith("https://report-generator-pearl-two.vercel.app/")
       ? message.url
       : REVISION_REPORT_URL;
-    openRevisionTab(url, Number.isInteger(minutes) ? minutes : 0)
+    openRevisionTab(url, Number.isInteger(minutes) ? minutes : 0, reportCategory(message.category))
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
     return true;
@@ -111,14 +111,30 @@ function delay(ms) {
 }
 
 /**
- * Opens the detailed report and types the total minutes into Revision.
+ * @param {unknown} value
+ * @returns {string}
+ */
+function reportCategory(value) {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (text === "feedback response") {
+    return "Feedback Response";
+  }
+  if (text === "review") {
+    return "Review";
+  }
+  return "Revision";
+}
+
+/**
+ * Opens the detailed report and types the total minutes into one category.
  * The page only saves that field from its own React handlers, so the fill
  * runs in the page and calls those handlers after any welcome dialog closes.
  *
  * @param {string} url
  * @param {number} minutes
+ * @param {string} category
  */
-async function openRevisionTab(url, minutes) {
+async function openRevisionTab(url, minutes, category) {
   const tab = await chrome.tabs.create({ url, active: true });
   if (!tab.id) {
     return;
@@ -129,7 +145,7 @@ async function openRevisionTab(url, minutes) {
     target: { tabId: tab.id },
     world: "MAIN",
     func: fillRevisionMinutes,
-    args: [minutes],
+    args: [minutes, category],
   });
 }
 
@@ -166,9 +182,11 @@ function waitForTab(tabId) {
  * Runs inside the report page. Kept self-contained so Chrome can inject it.
  *
  * @param {number} minutes
+ * @param {string} categoryLabel
  */
-function fillRevisionMinutes(minutes) {
+function fillRevisionMinutes(minutes, categoryLabel) {
   const text = String(minutes);
+  const wanted = String(categoryLabel || "Revision").trim().toLowerCase();
   const deadline = Date.now() + 3 * 60 * 1000;
 
   const sleep = (ms) => new Promise((resolve) => {
@@ -203,7 +221,7 @@ function fillRevisionMinutes(minutes) {
       if (!(category instanceof HTMLInputElement)) {
         continue;
       }
-      if (category.value.trim().toLowerCase() !== "revision") {
+      if (category.value.trim().toLowerCase() !== wanted) {
         continue;
       }
       const field = row.querySelector('input[id^="wb-minutes-"]');

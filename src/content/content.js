@@ -9,17 +9,36 @@ import {
 } from "../shared/constants.js";
 import {
   formatCopyTime,
+  formatDecimalHours,
   formatHoursMinutes,
   formatReport,
   sumMinutes,
 } from "./calculator.js";
-import { SheetAdapter } from "./cell-reader.js";
+import { clickedCellAddress, focusCell, parseSelectionLabel } from "./cell-reader.js";
+import { detectPlatform } from "./platform.js";
+import { createSelectionManager } from "./selection-manager.js";
 import { copyText } from "./clipboard.js";
 import { createFloatingPanel } from "./floating-panel.js";
-import { detectPlatform, isSelectionModifier } from "./platform.js";
-import { createSelectionManager, selectionKey } from "./selection-manager.js";
 import { isGoogleSheets } from "./sheet-detector.js";
 import { parseTimeToMinutes, shouldKeepInvalid } from "./time-parser.js";
+
+const REPORT_CATEGORIES = Object.freeze({
+  revision: Object.freeze({
+    addLabel: "Add to Revision",
+    field: "Revision",
+    name: "Revision",
+  }),
+  feedback: Object.freeze({
+    addLabel: "Add Feedback",
+    field: "Feedback Response",
+    name: "Feedback",
+  }),
+  checking: Object.freeze({
+    addLabel: "Add Checking",
+    field: "Review",
+    name: "Checking",
+  }),
+});
 
 const BOOTED = Symbol.for("sheet-time-calculator.booted");
 
@@ -36,14 +55,21 @@ function boot() {
   let minimized = false;
   let panel = null;
   let gridBound = false;
-  let watchedSheetKey = "";
   let statusText = "";
   let statusTone = "";
   let statusTimer = 0;
   let saveTimer = 0;
-  let toggleToken = 0;
+  let categoryId = "revision";
+  /** @type {Element | null} */
+  let formulaNode = null;
+  /** @type {Element | null} */
+  let nameBoxNode = null;
+  /** @type {Element | null} */
+  let gridNode = null;
   /** @type {{ label: string, raw: string } | null} */
-  let pointerBefore = null;
+  let clickBefore = null;
+  /** @type {{ x: number, y: number } | null} */
+  let lastPoint = null;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     handleMessage(message)
@@ -102,7 +128,6 @@ function boot() {
     minimized = false;
     mode = EXTENSION_MODES.ACTIVE;
     bindGrid();
-    watchedSheetKey = SheetAdapter.getCurrentSheetId() || "sheet";
     render();
     reportState(true);
   }
@@ -113,7 +138,6 @@ function boot() {
     unbindGrid();
     window.clearTimeout(statusTimer);
     window.clearTimeout(saveTimer);
-    toggleToken += 1;
     selection.clear();
     statusText = "";
     statusTone = "";
@@ -158,62 +182,96 @@ function boot() {
     gridBound = false;
   }
 
-  /** @type {{ stopLoop: () => void, attempt: (finalAttempt: boolean) => boolean } | null} */
-  let pendingClick = null;
-
   /**
-   * Snapshot the formula bar before Sheets handles the press.
-   * Ordinary clicks return immediately and never touch the sheet.
+   * Remember the formula bar before Sheets handles the press.
+   * A repeat click on the same cell can make Sheets show the previous cell.
    *
    * @param {PointerEvent} event
    */
   function onPointerDown(event) {
-    if (mode !== EXTENSION_MODES.ACTIVE || event.button !== 0) {
+    if (!isAddClick(event)) {
       return;
     }
-    if (!isSelectionModifier(event, platform.mac)) {
-      return;
-    }
-    if (eventHitsPanel(event) || !SheetAdapter.isGridTarget(event)) {
-      return;
-    }
-    finishPendingClick();
-    pointerBefore = SheetAdapter.readGridSnapshot();
+    clickBefore = {
+      label: readNameBox(),
+      raw: readFormulaText(),
+    };
   }
 
   /**
-   * Capture phase runs after the earlier pointerdown, when Sheets has
-   * usually already written the new value. Only Ctrl/Cmd+click reads it.
-   *
    * @param {MouseEvent} event
    */
   function onGridClick(event) {
-    if (mode !== EXTENSION_MODES.ACTIVE || event.button !== 0) {
+    if (!isAddClick(event)) {
       return;
     }
-    if (!isSelectionModifier(event, platform.mac)) {
+    const before = clickBefore || { label: "", raw: "" };
+    clickBefore = null;
+    const label = readNameBox();
+    const raw = readFormulaText();
+    if (isSameCellClick(before.label, label, event)) {
+      rememberPoint(event);
+      addRawValue(before.raw || raw);
       return;
     }
-    if (eventHitsPanel(event) || !SheetAdapter.isGridTarget(event)) {
+    if (raw && raw !== before.raw) {
+      rememberPoint(event);
+      addRawValue(raw);
       return;
     }
-    const token = (toggleToken += 1);
-    const before = pointerBefore || { label: "", raw: "" };
-    pointerBefore = null;
-    readClickedValue(token, before);
+    const named = parseSelectionLabel(label);
+    const beforeCell = singleCell(before.label);
+    if (named?.kind === "range" && beforeCell) {
+      const target = clickedCellAddress(label, beforeCell);
+      if (target && target !== beforeCell) {
+        focusCell(target);
+        rememberPoint(event);
+        requestAnimationFrame(() => {
+          addRawValue(readFormulaText() || raw);
+        });
+        return;
+      }
+    }
+    rememberPoint(event);
+    addRawValue(raw || before.raw);
   }
 
   /**
-   * @param {Event} event
+   * A normal left click on the grid adds the time.
+   * Shift and Alt stay with Google Sheets.
+   *
+   * @param {MouseEvent | PointerEvent} event
    */
-  function eventHitsPanel(event) {
-    const host = panel?.host;
-    if (!host) {
+  function isAddClick(event) {
+    if (mode !== EXTENSION_MODES.ACTIVE || event.button !== 0) {
       return false;
     }
-    const path = event.composedPath();
-    for (let i = 0; i < path.length; i += 1) {
-      if (path[i] === host) {
+    if (event.shiftKey || event.altKey) {
+      return false;
+    }
+    const host = panel?.host;
+    if (host && event.target === host) {
+      return false;
+    }
+    const target = event.target;
+    return target instanceof Element && isGridClick(target);
+  }
+
+  /**
+   * @param {string} beforeLabel
+   * @param {string} nowLabel
+   * @param {MouseEvent} event
+   */
+  function isSameCellClick(beforeLabel, nowLabel, event) {
+    const beforeCell = singleCell(beforeLabel);
+    const nowCell = singleCell(nowLabel);
+    if (beforeCell && nowCell && beforeCell === nowCell) {
+      return true;
+    }
+    if (lastPoint) {
+      const dx = event.clientX - lastPoint.x;
+      const dy = event.clientY - lastPoint.y;
+      if (dx * dx + dy * dy <= 14 * 14) {
         return true;
       }
     }
@@ -221,204 +279,86 @@ function boot() {
   }
 
   /**
-   * Read the formula bar now. If Sheets has already written the new value,
-   * paint it in this same turn. A few frames follow only when the bar is
-   * still the previous cell or a two-cell range.
-   *
-   * @param {number} token
-   * @param {{ label: string, raw: string }} before
-   */
-  function readClickedValue(token, before) {
-    let focused = false;
-    let settled = false;
-    let framesOn = true;
-    const beforeAddress = cellAddressFromLabel(before.label);
-
-    /**
-     * @param {boolean} finalAttempt
-     * @param {boolean} [allowSameCell]
-     * @returns {boolean} true when this click is finished
-     */
-    const attempt = (finalAttempt, allowSameCell = false) => {
-      if (settled || token !== toggleToken || mode !== EXTENSION_MODES.ACTIVE) {
-        return true;
-      }
-      let snap = SheetAdapter.readGridSnapshot();
-      let named = SheetAdapter.parseSelectionLabel(snap.label);
-      if (named?.kind === "range" && !focused) {
-        const target = SheetAdapter.clickedCellAddress(snap.label, beforeAddress);
-        if (target) {
-          SheetAdapter.focusCell(target);
-          focused = true;
-          snap = SheetAdapter.readGridSnapshot();
-          named = SheetAdapter.parseSelectionLabel(snap.label);
-        }
-      }
-      if (!named || named.kind !== "cell") {
-        if (!finalAttempt) {
-          return false;
-        }
-        settled = true;
-        framesOn = false;
-        pendingClick = null;
-        setStatus("Could not read this cell.", "error");
-        render();
-        return true;
-      }
-
-      const moved = Boolean(beforeAddress) && named.cellAddress !== beforeAddress;
-      const valueChanged = snap.raw !== before.raw;
-      if (!finalAttempt) {
-        if (!snap.raw || (beforeAddress && !moved) || (moved && !valueChanged)) {
-          return false;
-        }
-      } else if (!moved && !allowSameCell) {
-        settled = true;
-        framesOn = false;
-        pendingClick = null;
-        return true;
-      } else if (focused && named.cellAddress === beforeAddress) {
-        settled = true;
-        framesOn = false;
-        pendingClick = null;
-        setStatus("Could not read this cell.", "error");
-        render();
-        return true;
-      }
-
-      settled = true;
-      framesOn = false;
-      pendingClick = null;
-      applyToggle({
-        sheetName: "",
-        sheetId: SheetAdapter.getCurrentSheetId() || "sheet",
-        cellAddress: named.cellAddress,
-        rawValue: snap.raw,
-        row: named.row,
-        column: named.column,
-        source: "formula-bar",
-        readError: snap.raw ? (snap.raw.trim().startsWith("=") ? "formula" : null) : "no-value",
-      });
-      return true;
-    };
-
-    pendingClick = {
-      stopLoop() {
-        framesOn = false;
-      },
-      attempt,
-    };
-
-    if (attempt(false)) {
-      return;
-    }
-    queueMicrotask(() => {
-      if (!framesOn || settled) {
-        return;
-      }
-      if (attempt(false)) {
-        return;
-      }
-      let frame = 0;
-      const step = () => {
-        if (!framesOn || settled) {
-          return;
-        }
-        frame += 1;
-        if (!attempt(frame >= 3, true)) {
-          requestAnimationFrame(step);
-        }
-      };
-      requestAnimationFrame(step);
-    });
-  }
-
-  function finishPendingClick() {
-    const job = pendingClick;
-    if (!job) {
-      return;
-    }
-    pendingClick = null;
-    job.stopLoop();
-    job.attempt(true, false);
-  }
-
-  /**
    * @param {string} label
    * @returns {string}
    */
-  function cellAddressFromLabel(label) {
-    const named = SheetAdapter.parseSelectionLabel(label);
+  function singleCell(label) {
+    const named = parseSelectionLabel(label);
     return named?.kind === "cell" ? named.cellAddress : "";
   }
 
   /**
-   * @param {import("./cell-reader.js").ActiveCellInfo} info
+   * @param {MouseEvent} event
    */
-  function applyToggle(info) {
-    const sheetChanged = syncSheet();
-
-    if (info.readError === "no-value") {
-      setStatus(sheetChanged
-        ? "Switched sheets. Previous selection was cleared."
-        : "Could not read this cell.", sheetChanged ? "warn" : "error");
-      render();
-      return;
-    }
-
-    const parsed = parseTimeToMinutes(info.rawValue);
-
-    if (parsed.status === "ignore") {
-      setStatus(sheetChanged
-        ? "Switched sheets. Previous selection was cleared."
-        : "Empty cell skipped.", sheetChanged ? "warn" : "info");
-      render();
-      return;
-    }
-    if (parsed.status === "unreadable" || (parsed.status === "invalid" && !shouldKeepInvalid(parsed))) {
-      setStatus(
-        sheetChanged
-          ? "Switched sheets. Previous selection was cleared."
-          : (parsed.message || "Could not read this cell."),
-        "warn",
-      );
-      render();
-      return;
-    }
-
-    selection.toggle({
-      key: selectionKey(info.sheetId, info.cellAddress),
-      sheetId: info.sheetId,
-      sheetName: info.sheetName,
-      cellAddress: info.cellAddress,
-      rawValue: parsed.raw || info.rawValue,
-      row: info.row,
-      column: info.column,
-      parse: parsed,
-    });
-
-    if (sheetChanged) {
-      setStatus("Switched sheets. Previous selection was cleared.", "warn");
-    } else if (parsed.status === "invalid") {
-      setStatus(parsed.message || "Invalid time format.", "warn");
-    } else {
-      setStatus("", "");
-    }
-    render();
+  function rememberPoint(event) {
+    lastPoint = { x: event.clientX, y: event.clientY };
   }
 
   /**
-   * @returns {boolean} true when an existing selection belonged to another sheet
+   * @param {Element} target
    */
-  function syncSheet() {
-    const nextKey = SheetAdapter.getCurrentSheetId() || "sheet";
-    const changed = Boolean(watchedSheetKey) && nextKey !== watchedSheetKey && selection.list().length > 0;
-    watchedSheetKey = nextKey;
-    if (!changed) {
-      return false;
+  function isGridClick(target) {
+    if (target.tagName === "CANVAS") {
+      return true;
     }
-    selection.clear();
-    return true;
+    if (!gridNode?.isConnected) {
+      gridNode = document.getElementById("waffle-grid-container");
+    }
+    return Boolean(gridNode && gridNode.contains(target));
+  }
+
+  /**
+   * @returns {string}
+   */
+  function readFormulaText() {
+    if (!formulaNode?.isConnected) {
+      formulaNode = document.getElementById("t-formula-bar-input");
+    }
+    if (!formulaNode) {
+      return "";
+    }
+    if ("value" in formulaNode && typeof formulaNode.value === "string") {
+      return formulaNode.value.trim();
+    }
+    return (formulaNode.textContent || "").trim();
+  }
+
+  function readNameBox() {
+    if (!nameBoxNode?.isConnected) {
+      nameBoxNode = document.getElementById("t-name-box");
+    }
+    if (!nameBoxNode) {
+      return "";
+    }
+    if ("value" in nameBoxNode && typeof nameBoxNode.value === "string") {
+      return nameBoxNode.value.trim();
+    }
+    return (nameBoxNode.textContent || "").trim();
+  }
+
+  /**
+   * @param {string} raw
+   */
+  function addRawValue(raw) {
+    if (!raw) {
+      return;
+    }
+    const parsed = parseTimeToMinutes(raw);
+    if (parsed.status === "ignore") {
+      return;
+    }
+    if (parsed.status === "unreadable" || (parsed.status === "invalid" && !shouldKeepInvalid(parsed))) {
+      setStatus(parsed.message || "Could not read this value.", "warn");
+      render();
+      return;
+    }
+    selection.add(parsed.raw || raw, parsed);
+    if (parsed.status === "invalid") {
+      setStatus(parsed.message || "Invalid time format.", "warn");
+    } else if (statusText) {
+      setStatus("", "");
+    }
+    render();
   }
 
   /**
@@ -465,6 +405,12 @@ function boot() {
       case "add-revision":
         await addToRevision();
         break;
+      case "category":
+        if (Object.prototype.hasOwnProperty.call(REPORT_CATEGORIES, key || "")) {
+          categoryId = key || "revision";
+          render();
+        }
+        break;
       case "copy-report":
         await copyAndFlash("copy-report", buildReport());
         break;
@@ -474,15 +420,17 @@ function boot() {
   }
 
   async function addToRevision() {
+    const category = REPORT_CATEGORIES[categoryId] || REPORT_CATEGORIES.revision;
     const minutes = currentTotal();
     if (!Number.isFinite(minutes) || minutes <= 0) {
-      setStatus("Add a time before sending it to Revision.", "warn");
+      setStatus(`Add a time before sending it to ${category.name}.`, "warn");
       render();
       return;
     }
     await chrome.storage.local.set({
       [STORAGE_KEYS.REVISION_MINUTES]: {
         minutes,
+        category: category.field,
         requestedAt: Date.now(),
       },
     });
@@ -490,6 +438,7 @@ function boot() {
       type: MESSAGE_TYPES.OPEN_REVISION,
       url: REVISION_REPORT_URL,
       minutes,
+      category: category.field,
     }).catch(() => null);
     if (!opened?.ok) {
       setStatus("Could not open the report page.", "error");
@@ -505,13 +454,7 @@ function boot() {
       render();
       return;
     }
-    const info = SheetAdapter.getActiveCell();
-    if (!info?.cellAddress) {
-      setStatus("Could not read this cell.", "error");
-      render();
-      return;
-    }
-    applyToggle(info);
+    addRawValue(readFormulaText());
   }
 
   function currentTotal() {
@@ -522,15 +465,14 @@ function boot() {
 
   function buildReport() {
     const items = selection.list().map((item) => ({
-      cellAddress: item.cellAddress,
+      cellAddress: item.rawValue,
       rawValue: item.rawValue,
       detail: item.parse.status === "ok"
         ? formatHoursMinutes(item.parse.totalMinutes || 0)
         : (item.parse.message || "invalid"),
     }));
-    const sheetName = selection.list()[0]?.sheetName || "Sheet";
     return formatReport({
-      sheetName,
+      sheetName: "",
       items,
       totalMinutes: currentTotal(),
     });
@@ -550,34 +492,39 @@ function boot() {
       return;
     }
     const items = selection.list();
-    const total = sumMinutes(items.map((item) => (
-      item.parse.status === "ok" ? item.parse.totalMinutes : null
-    )));
+    let total = 0;
+    let invalidCount = 0;
+    /** @type {Array<{ key: string, rawValue: string, parsedLabel: string, invalid: boolean, message: string }>} */
+    const viewItems = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      const ok = item.parse.status === "ok";
+      if (ok) {
+        total += item.parse.totalMinutes || 0;
+      } else {
+        invalidCount += 1;
+      }
+      viewItems.push({
+        key: item.key,
+        rawValue: item.rawValue,
+        parsedLabel: ok ? formatHoursMinutes(item.parse.totalMinutes || 0) : "",
+        invalid: !ok,
+        message: item.parse.message || "Invalid time format",
+      });
+    }
     panel.update({
       mode: mode === EXTENSION_MODES.PAUSED ? "paused" : "active",
       minimized,
       hint: platform.hint,
-      items: items.map(toPanelItem),
+      items: viewItems,
       totalMinutes: total,
-      hoursLabel: formatHoursMinutes(total),
-      invalidCount: items.filter((item) => item.parse.status !== "ok").length,
+      hoursLabel: `${formatDecimalHours(total)} hours`,
+      invalidCount,
       statusText,
       statusTone,
+      category: categoryId,
+      addLabel: (REPORT_CATEGORIES[categoryId] || REPORT_CATEGORIES.revision).addLabel,
     });
-  }
-
-  /**
-   * @param {import("./selection-manager.js").SelectionEntry} item
-   */
-  function toPanelItem(item) {
-    const ok = item.parse.status === "ok";
-    return {
-      key: item.key,
-      rawValue: item.rawValue,
-      parsedLabel: ok ? formatHoursMinutes(item.parse.totalMinutes || 0) : "",
-      invalid: !ok,
-      message: item.parse.message || "Invalid time format",
-    };
   }
 
   /**

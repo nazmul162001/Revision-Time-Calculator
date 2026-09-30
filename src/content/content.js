@@ -1,7 +1,6 @@
 "use strict";
 
 import {
-  CELL_READ_DELAYS_MS,
   EXTENSION_MODES,
   MESSAGE_TYPES,
   REVISION_REPORT_URL,
@@ -37,16 +36,13 @@ function boot() {
   let minimized = false;
   let panel = null;
   let gridBound = false;
-  let sheetObserver = null;
   let watchedSheetKey = "";
-  let candidate = null;
   let statusText = "";
   let statusTone = "";
   let statusTimer = 0;
   let saveTimer = 0;
   let toggleToken = 0;
-  let candidateToken = 0;
-  /** @type {import("./cell-reader.js").ActiveCellInfo | null} */
+  /** @type {{ label: string, raw: string } | null} */
   let pointerBefore = null;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -106,7 +102,7 @@ function boot() {
     minimized = false;
     mode = EXTENSION_MODES.ACTIVE;
     bindGrid();
-    watchSheet();
+    watchedSheetKey = SheetAdapter.getCurrentSheetId() || "sheet";
     render();
     reportState(true);
   }
@@ -115,13 +111,10 @@ function boot() {
     mode = EXTENSION_MODES.INACTIVE;
     minimized = false;
     unbindGrid();
-    unwatchSheet();
     window.clearTimeout(statusTimer);
     window.clearTimeout(saveTimer);
     toggleToken += 1;
-    candidateToken += 1;
     selection.clear();
-    candidate = null;
     statusText = "";
     statusTone = "";
     panel?.destroy();
@@ -165,10 +158,12 @@ function boot() {
     gridBound = false;
   }
 
+  /** @type {{ stopLoop: () => void, attempt: (finalAttempt: boolean) => boolean } | null} */
+  let pendingClick = null;
+
   /**
-   * Captured before Sheets handles the press, so a click on the row below
-   * still knows which cell was active. Sheets often turns that press into
-   * a two-cell range such as M644:M645.
+   * Snapshot the formula bar before Sheets handles the press.
+   * Ordinary clicks return immediately and never touch the sheet.
    *
    * @param {PointerEvent} event
    */
@@ -176,142 +171,185 @@ function boot() {
     if (mode !== EXTENSION_MODES.ACTIVE || event.button !== 0) {
       return;
     }
-    if (panel?.host && event.composedPath().includes(panel.host)) {
+    if (!isSelectionModifier(event, platform.mac)) {
       return;
     }
-    if (!SheetAdapter.isGridTarget(event)) {
+    if (eventHitsPanel(event) || !SheetAdapter.isGridTarget(event)) {
       return;
     }
-    pointerBefore = SheetAdapter.getActiveCell();
+    finishPendingClick();
+    pointerBefore = SheetAdapter.readGridSnapshot();
   }
 
   /**
+   * Capture phase runs after the earlier pointerdown, when Sheets has
+   * usually already written the new value. Only Ctrl/Cmd+click reads it.
+   *
    * @param {MouseEvent} event
    */
   function onGridClick(event) {
     if (mode !== EXTENSION_MODES.ACTIVE || event.button !== 0) {
       return;
     }
-    if (panel?.host && event.composedPath().includes(panel.host)) {
+    if (!isSelectionModifier(event, platform.mac)) {
       return;
     }
-    if (!SheetAdapter.isGridTarget(event)) {
+    if (eventHitsPanel(event) || !SheetAdapter.isGridTarget(event)) {
       return;
     }
-    ensureSheetWatch();
-
-    if (isSelectionModifier(event, platform.mac)) {
-      scheduleRead("toggle");
-      return;
-    }
-    if (event.metaKey || event.ctrlKey || event.altKey) {
-      return;
-    }
-    scheduleRead("candidate");
+    const token = (toggleToken += 1);
+    const before = pointerBefore || { label: "", raw: "" };
+    pointerBefore = null;
+    readClickedValue(token, before);
   }
 
   /**
-   * @param {"toggle" | "candidate"} kind
+   * @param {Event} event
    */
-  function scheduleRead(kind) {
-    const token = kind === "toggle" ? (toggleToken += 1) : (candidateToken += 1);
-    readAfterSheetsUpdates(token, kind).catch(() => {
-      setStatus("Could not read this cell.", "error");
-      render();
+  function eventHitsPanel(event) {
+    const host = panel?.host;
+    if (!host) {
+      return false;
+    }
+    const path = event.composedPath();
+    for (let i = 0; i < path.length; i += 1) {
+      if (path[i] === host) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Read the formula bar now. If Sheets has already written the new value,
+   * paint it in this same turn. A few frames follow only when the bar is
+   * still the previous cell or a two-cell range.
+   *
+   * @param {number} token
+   * @param {{ label: string, raw: string }} before
+   */
+  function readClickedValue(token, before) {
+    let focused = false;
+    let settled = false;
+    let framesOn = true;
+    const beforeAddress = cellAddressFromLabel(before.label);
+
+    /**
+     * @param {boolean} finalAttempt
+     * @param {boolean} [allowSameCell]
+     * @returns {boolean} true when this click is finished
+     */
+    const attempt = (finalAttempt, allowSameCell = false) => {
+      if (settled || token !== toggleToken || mode !== EXTENSION_MODES.ACTIVE) {
+        return true;
+      }
+      let snap = SheetAdapter.readGridSnapshot();
+      let named = SheetAdapter.parseSelectionLabel(snap.label);
+      if (named?.kind === "range" && !focused) {
+        const target = SheetAdapter.clickedCellAddress(snap.label, beforeAddress);
+        if (target) {
+          SheetAdapter.focusCell(target);
+          focused = true;
+          snap = SheetAdapter.readGridSnapshot();
+          named = SheetAdapter.parseSelectionLabel(snap.label);
+        }
+      }
+      if (!named || named.kind !== "cell") {
+        if (!finalAttempt) {
+          return false;
+        }
+        settled = true;
+        framesOn = false;
+        pendingClick = null;
+        setStatus("Could not read this cell.", "error");
+        render();
+        return true;
+      }
+
+      const moved = Boolean(beforeAddress) && named.cellAddress !== beforeAddress;
+      const valueChanged = snap.raw !== before.raw;
+      if (!finalAttempt) {
+        if (!snap.raw || (beforeAddress && !moved) || (moved && !valueChanged)) {
+          return false;
+        }
+      } else if (!moved && !allowSameCell) {
+        settled = true;
+        framesOn = false;
+        pendingClick = null;
+        return true;
+      } else if (focused && named.cellAddress === beforeAddress) {
+        settled = true;
+        framesOn = false;
+        pendingClick = null;
+        setStatus("Could not read this cell.", "error");
+        render();
+        return true;
+      }
+
+      settled = true;
+      framesOn = false;
+      pendingClick = null;
+      applyToggle({
+        sheetName: "",
+        sheetId: SheetAdapter.getCurrentSheetId() || "sheet",
+        cellAddress: named.cellAddress,
+        rawValue: snap.raw,
+        row: named.row,
+        column: named.column,
+        source: "formula-bar",
+        readError: snap.raw ? (snap.raw.trim().startsWith("=") ? "formula" : null) : "no-value",
+      });
+      return true;
+    };
+
+    pendingClick = {
+      stopLoop() {
+        framesOn = false;
+      },
+      attempt,
+    };
+
+    if (attempt(false)) {
+      return;
+    }
+    queueMicrotask(() => {
+      if (!framesOn || settled) {
+        return;
+      }
+      if (attempt(false)) {
+        return;
+      }
+      let frame = 0;
+      const step = () => {
+        if (!framesOn || settled) {
+          return;
+        }
+        frame += 1;
+        if (!attempt(frame >= 3, true)) {
+          requestAnimationFrame(step);
+        }
+      };
+      requestAnimationFrame(step);
     });
   }
 
-  /**
-   * @param {number} token
-   * @param {"toggle" | "candidate"} kind
-   */
-  async function readAfterSheetsUpdates(token, kind) {
-    const beforeAddress = pointerBefore?.cellAddress || "";
-    const beforeRaw = pointerBefore?.rawValue ?? "";
-    let latest = null;
-    /** @type {string} */
-    let focused = "";
-    let sawRange = false;
-    /** @type {{ address: string, raw: string, hits: number } | null} */
-    let repeat = null;
-
-    for (const step of CELL_READ_DELAYS_MS) {
-      await wait(step);
-      if (!isCurrentRead(token, kind)) {
-        return;
-      }
-
-      const named = SheetAdapter.parseSelectionLabel(SheetAdapter.readNameBoxText());
-      if (named?.kind === "range") {
-        sawRange = true;
-        const target = SheetAdapter.clickedCellAddress(SheetAdapter.readNameBoxText(), beforeAddress);
-        if (target && focused !== target) {
-          SheetAdapter.focusCell(target);
-          focused = target;
-        }
-        continue;
-      }
-
-      const info = SheetAdapter.getActiveCell();
-      if (!info?.cellAddress || info.readError === "no-value") {
-        continue;
-      }
-      if (focused && info.cellAddress !== focused) {
-        continue;
-      }
-
-      const changed = Boolean(beforeAddress) && info.cellAddress !== beforeAddress;
-      const sameRead = repeat
-        && repeat.address === info.cellAddress
-        && repeat.raw === info.rawValue;
-      repeat = {
-        address: info.cellAddress,
-        raw: info.rawValue,
-        hits: sameRead ? repeat.hits + 1 : 1,
-      };
-
-      if (!changed) {
-        if (focused && info.cellAddress === focused && info.rawValue !== "") {
-          latest = info;
-          break;
-        }
-        if (!sawRange) {
-          latest = info;
-        }
-        continue;
-      }
-
-      const formulaSettled = info.rawValue !== "" && info.rawValue !== beforeRaw;
-      const lastStep = step === CELL_READ_DELAYS_MS[CELL_READ_DELAYS_MS.length - 1];
-      if (formulaSettled || (lastStep && info.rawValue !== "" && repeat.hits >= 2)) {
-        latest = info;
-        break;
-      }
-    }
-
-    if (!isCurrentRead(token, kind)) {
+  function finishPendingClick() {
+    const job = pendingClick;
+    if (!job) {
       return;
     }
-    const stuckOnPrevious = Boolean(latest) && latest.cellAddress === beforeAddress && (sawRange || focused);
-    if (!latest || stuckOnPrevious) {
-      setStatus("Could not read this cell.", "error");
-      render();
-      return;
-    }
-    if (kind === "toggle") {
-      applyToggle(latest);
-    } else {
-      setCandidate(latest);
-    }
+    pendingClick = null;
+    job.stopLoop();
+    job.attempt(true, false);
   }
 
   /**
-   * @param {number} token
-   * @param {"toggle" | "candidate"} kind
+   * @param {string} label
+   * @returns {string}
    */
-  function isCurrentRead(token, kind) {
-    const current = kind === "toggle" ? toggleToken : candidateToken;
-    return token === current && mode === EXTENSION_MODES.ACTIVE;
+  function cellAddressFromLabel(label) {
+    const named = SheetAdapter.parseSelectionLabel(label);
+    return named?.kind === "cell" ? named.cellAddress : "";
   }
 
   /**
@@ -321,7 +359,6 @@ function boot() {
     const sheetChanged = syncSheet();
 
     if (info.readError === "no-value") {
-      setCandidate(info);
       setStatus(sheetChanged
         ? "Switched sheets. Previous selection was cleared."
         : "Could not read this cell.", sheetChanged ? "warn" : "error");
@@ -330,7 +367,6 @@ function boot() {
     }
 
     const parsed = parseTimeToMinutes(info.rawValue);
-    setCandidate(info, parsed);
 
     if (parsed.status === "ignore") {
       setStatus(sheetChanged
@@ -350,7 +386,7 @@ function boot() {
       return;
     }
 
-    const result = selection.toggle({
+    selection.toggle({
       key: selectionKey(info.sheetId, info.cellAddress),
       sheetId: info.sheetId,
       sheetName: info.sheetName,
@@ -363,8 +399,6 @@ function boot() {
 
     if (sheetChanged) {
       setStatus("Switched sheets. Previous selection was cleared.", "warn");
-    } else if (result.action === "removed") {
-      setStatus(`${info.cellAddress} removed.`, "info");
     } else if (parsed.status === "invalid") {
       setStatus(parsed.message || "Invalid time format.", "warn");
     } else {
@@ -374,73 +408,17 @@ function boot() {
   }
 
   /**
-   * @param {import("./cell-reader.js").ActiveCellInfo} info
-   * @param {import("./time-parser.js").ParseResult} [parsed]
-   */
-  function setCandidate(info, parsed) {
-    candidate = {
-      info,
-      parsed: parsed || parseTimeToMinutes(info.rawValue),
-    };
-  }
-
-  /**
    * @returns {boolean} true when an existing selection belonged to another sheet
    */
   function syncSheet() {
-    const nextKey = SheetAdapter.getSheetKey();
-    if (!nextKey) {
-      return false;
-    }
+    const nextKey = SheetAdapter.getCurrentSheetId() || "sheet";
     const changed = Boolean(watchedSheetKey) && nextKey !== watchedSheetKey && selection.list().length > 0;
     watchedSheetKey = nextKey;
     if (!changed) {
       return false;
     }
     selection.clear();
-    candidate = null;
     return true;
-  }
-
-  function watchSheet() {
-    unwatchSheet();
-    const bar = SheetAdapter.findTabBar();
-    watchedSheetKey = SheetAdapter.getSheetKey();
-    if (!bar) {
-      return;
-    }
-    sheetObserver = new MutationObserver(() => {
-      const next = SheetAdapter.getSheetKey();
-      if (!next || next === watchedSheetKey) {
-        return;
-      }
-      watchedSheetKey = next;
-      if (!selection.list().length) {
-        render();
-        return;
-      }
-      selection.clear();
-      candidate = null;
-      setStatus("Switched sheets. Selection cleared.", "warn");
-      render();
-    });
-    sheetObserver.observe(bar, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ["class", "aria-selected"],
-    });
-  }
-
-  function ensureSheetWatch() {
-    if (!sheetObserver) {
-      watchSheet();
-    }
-  }
-
-  function unwatchSheet() {
-    sheetObserver?.disconnect();
-    sheetObserver = null;
   }
 
   /**
@@ -550,7 +528,7 @@ function boot() {
         ? formatHoursMinutes(item.parse.totalMinutes || 0)
         : (item.parse.message || "invalid"),
     }));
-    const sheetName = selection.list()[0]?.sheetName || SheetAdapter.getCurrentSheetName() || "Sheet";
+    const sheetName = selection.list()[0]?.sheetName || "Sheet";
     return formatReport({
       sheetName,
       items,
@@ -572,13 +550,13 @@ function boot() {
       return;
     }
     const items = selection.list();
-    const total = currentTotal();
+    const total = sumMinutes(items.map((item) => (
+      item.parse.status === "ok" ? item.parse.totalMinutes : null
+    )));
     panel.update({
       mode: mode === EXTENSION_MODES.PAUSED ? "paused" : "active",
       minimized,
-      sheetName: SheetAdapter.getCurrentSheetName() || items[0]?.sheetName || "Sheet",
       hint: platform.hint,
-      candidateText: formatCandidate(),
       items: items.map(toPanelItem),
       totalMinutes: total,
       hoursLabel: formatHoursMinutes(total),
@@ -588,20 +566,6 @@ function boot() {
     });
   }
 
-  function formatCandidate() {
-    if (!candidate?.info) {
-      return "No active cell yet";
-    }
-    const { info, parsed } = candidate;
-    if (!parsed || parsed.status === "ignore") {
-      return `${info.cellAddress}  empty`;
-    }
-    if (parsed.status === "ok") {
-      return `${info.cellAddress}  ${parsed.raw} → ${formatHoursMinutes(parsed.totalMinutes || 0)}`;
-    }
-    return `${info.cellAddress}  ${parsed.message || info.rawValue || "Could not read this cell."}`;
-  }
-
   /**
    * @param {import("./selection-manager.js").SelectionEntry} item
    */
@@ -609,7 +573,6 @@ function boot() {
     const ok = item.parse.status === "ok";
     return {
       key: item.key,
-      cellAddress: item.cellAddress,
       rawValue: item.rawValue,
       parsedLabel: ok ? formatHoursMinutes(item.parse.totalMinutes || 0) : "",
       invalid: !ok,
@@ -674,13 +637,4 @@ function boot() {
       active,
     }).catch(() => {});
   }
-}
-
-/**
- * @param {number} ms
- */
-function wait(ms) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
 }

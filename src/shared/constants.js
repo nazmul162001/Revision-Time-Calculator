@@ -29,13 +29,6 @@ export const REVISION_REPORT_URL = "https://report-generator-pearl-two.vercel.ap
 /** Spreadsheet host. The extension does not run selection logic elsewhere. */
 export const SHEETS_ORIGIN_PREFIX = "https://docs.google.com/spreadsheets/";
 
-/**
- * Delays after a grid click before reading the name box.
- * Google Sheets updates the name box and formula bar after it handles the click.
- * These are one-shot waits, not a polling loop.
- */
-export const CELL_READ_DELAYS_MS = Object.freeze([70, 110, 150, 200, 260, 340]);
-
 export const MAX_MINUTE_PART = 59;
 
 export const DECIMAL_HOUR_PLACES = 2;

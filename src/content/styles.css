@@ -149,7 +149,12 @@ button:focus-visible {
 }
 
 .stc-term {
+  border: 0;
+  padding: 0;
+  background: transparent;
   color: var(--stc-text);
+  font: inherit;
+  cursor: pointer;
 }
 
 .stc-term.is-zero {

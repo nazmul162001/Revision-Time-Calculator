@@ -82,10 +82,56 @@ const BLOCKED_CLICK_SELECTORS = [
  * @property {string | null} readError
  */
 
+/** @type {Element | null} */
+let cachedNameBox = null;
+/** @type {Element | null} */
+let cachedFormulaBar = null;
+
+/**
+ * Name box and formula bar are stable inputs. Keep the nodes so a click
+ * does not search the spreadsheet document again.
+ *
+ * @returns {Element | null}
+ */
+function nameBoxElement() {
+  if (cachedNameBox?.isConnected) {
+    return cachedNameBox;
+  }
+  cachedNameBox = document.getElementById("t-name-box") || queryFirst(NAME_BOX_SELECTORS);
+  return cachedNameBox;
+}
+
+/**
+ * @returns {Element | null}
+ */
+function formulaBarElement() {
+  if (cachedFormulaBar?.isConnected) {
+    return cachedFormulaBar;
+  }
+  cachedFormulaBar = document.getElementById("t-formula-bar-input") || queryFirst(FORMULA_BAR_SELECTORS);
+  return cachedFormulaBar;
+}
+
+/**
+ * The two strings a click needs: name-box label and formula-bar text.
+ * No sheet tab lookup and no accessibility-tree walk.
+ *
+ * @returns {{ label: string, raw: string }}
+ */
+export function readGridSnapshot() {
+  const nameBox = nameBoxElement();
+  const formula = formulaBarElement();
+  return {
+    label: nameBox ? readElementText(nameBox).trim() : "",
+    raw: formula ? cleanCellText(readElementText(formula)) : "",
+  };
+}
+
 export const SheetAdapter = Object.freeze({
   isGoogleSheets,
   getActiveCell,
   getCellValue,
+  readGridSnapshot,
   readNameBoxText,
   parseSelectionLabel,
   clickedCellAddress,
@@ -102,33 +148,27 @@ export const SheetAdapter = Object.freeze({
  */
 export function getActiveCell() {
   try {
-    const address = readActiveAddress();
-    if (!address) {
+    const snap = readGridSnapshot();
+    const named = parseSelectionLabel(snap.label);
+    if (!named || named.kind !== "cell") {
       return null;
     }
 
-    const sheetName = getCurrentSheetName();
-    const sheetId = getCurrentSheetId() || sheetName || "sheet";
-    const ariaValue = readAriaCellValue(address.cellAddress);
-    const formulaValue = getCellValue();
-    const usedAria = ariaValue != null && !looksLikeFormula(ariaValue);
-    const rawValue = usedAria ? ariaValue : formulaValue;
-
     /** @type {ActiveCellInfo} */
     const info = {
-      sheetName: sheetName || "Sheet",
-      sheetId,
-      cellAddress: address.cellAddress,
-      rawValue: rawValue == null ? "" : rawValue,
-      row: address.row,
-      column: address.column,
-      source: usedAria ? "aria" : "formula-bar",
+      sheetName: "",
+      sheetId: getCurrentSheetId() || "sheet",
+      cellAddress: named.cellAddress,
+      rawValue: snap.raw,
+      row: named.row,
+      column: named.column,
+      source: "formula-bar",
       readError: null,
     };
 
-    if (rawValue == null) {
+    if (!snap.raw) {
       info.readError = "no-value";
-    } else if (!usedAria && looksLikeFormula(rawValue)) {
+    } else if (looksLikeFormula(snap.raw)) {
       info.readError = "formula";
     }
 
@@ -145,7 +185,7 @@ export function getActiveCell() {
  * @returns {string | null}
  */
 export function getCellValue() {
-  const node = queryFirst(FORMULA_BAR_SELECTORS);
+  const node = formulaBarElement();
   if (!node) {
     return null;
   }
@@ -207,14 +247,18 @@ export function isGridTarget(event) {
   if (!(target instanceof Element)) {
     return false;
   }
+  if (target.tagName === "CANVAS") {
+    return true;
+  }
+  const grid = document.getElementById("waffle-grid-container");
+  if (grid?.contains(target)) {
+    return !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement);
+  }
   if (target.closest(BLOCKED_CLICK_SELECTORS)) {
     return false;
   }
   if (target.closest("input, textarea, select, [contenteditable='true']")) {
     return false;
-  }
-  if (target.tagName === "CANVAS" || target.closest("canvas")) {
-    return true;
   }
   return Boolean(target.closest(GRID_SELECTORS.join(", ")));
 }
@@ -284,7 +328,7 @@ function readActiveAddress() {
   if (fromNameBox?.kind === "cell") {
     return fromNameBox;
   }
-  return readAriaAddress();
+  return null;
 }
 
 /**
@@ -293,12 +337,11 @@ function readActiveAddress() {
  * @returns {string}
  */
 export function readNameBoxText() {
-  const nameBox = queryFirst(NAME_BOX_SELECTORS);
+  const nameBox = nameBoxElement();
   if (!nameBox) {
     return "";
   }
-  const value = "value" in nameBox ? String(nameBox.value || "") : (nameBox.textContent || "");
-  return value.trim();
+  return readElementText(nameBox).trim();
 }
 
 /**
@@ -369,7 +412,7 @@ export function clickedCellAddress(label, beforeAddress) {
  * @returns {boolean}
  */
 export function focusCell(address) {
-  const nameBox = queryFirst(NAME_BOX_SELECTORS);
+  const nameBox = nameBoxElement();
   if (!(nameBox instanceof HTMLInputElement) || !address) {
     return false;
   }
@@ -394,43 +437,6 @@ export function focusCell(address) {
   } catch {
     return false;
   }
-}
-
-/**
- * Some Sheets accessibility modes expose the active cell as a gridcell.
- * The canvas grid usually does not. This is attempted first and ignored
- * when it is absent.
- *
- * @returns {{ cellAddress: string, column: number, row: number } | null}
- */
-function readAriaAddress() {
-  const selected = document.querySelector('[role="gridcell"][aria-selected="true"]');
-  if (!selected) {
-    return null;
-  }
-  const label = selected.getAttribute("aria-label") || "";
-  const match = /\b([A-Z]+\d+)\b/.exec(label);
-  return match ? parseCellAddress(match[1]) : null;
-}
-
-/**
- * @param {string} cellAddress
- * @returns {string | null}
- */
-function readAriaCellValue(cellAddress) {
-  const selected = document.querySelector('[role="gridcell"][aria-selected="true"]');
-  if (!selected) {
-    return null;
-  }
-  const label = selected.getAttribute("aria-label") || "";
-  if (!label.includes(cellAddress)) {
-    return null;
-  }
-  const text = cleanCellText(selected.textContent || "");
-  if (!text || text === cellAddress) {
-    return null;
-  }
-  return text;
 }
 
 /**

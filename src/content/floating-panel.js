@@ -5,7 +5,6 @@ import { COPY_FEEDBACK_MS, PANEL_DEFAULTS, ROOT_ID } from "../shared/constants.j
 /**
  * @typedef {Object} PanelItem
  * @property {string} key
- * @property {string} cellAddress
  * @property {string} rawValue
  * @property {string} parsedLabel
  * @property {boolean} invalid
@@ -16,9 +15,7 @@ import { COPY_FEEDBACK_MS, PANEL_DEFAULTS, ROOT_ID } from "../shared/constants.j
  * @typedef {Object} PanelView
  * @property {"active" | "paused"} mode
  * @property {boolean} minimized
- * @property {string} sheetName
  * @property {string} hint
- * @property {string} candidateText
  * @property {PanelItem[]} items
  * @property {number} totalMinutes
  * @property {string} hoursLabel
@@ -200,19 +197,10 @@ export async function createFloatingPanel(options) {
     }
 
     const paused = next.mode === "paused";
-    setText(panel, "[data-field='sheet']", next.sheetName || "Sheet");
     setText(panel, "[data-field='mode']", paused ? "Paused" : next.hint);
     panel.querySelector(".stc-pip")?.classList.toggle("is-on", !paused);
 
-    const candidate = panel.querySelector("[data-field='candidate']");
-    if (candidate) {
-      const text = next.candidateText && next.candidateText !== "No active cell yet" ? next.candidateText : "";
-      candidate.hidden = !text;
-      candidate.textContent = text;
-    }
-
     renderExpression(next.items);
-    renderItems(next.items);
     setText(panel, "[data-field='minutes']", String(next.totalMinutes));
     setText(panel, "[data-field='hours']", next.hoursLabel);
 
@@ -255,51 +243,15 @@ export async function createFloatingPanel(options) {
         plus.textContent = "+";
         expr.append(plus);
       }
-      const term = document.createElement("span");
+      const term = document.createElement("button");
+      term.type = "button";
       term.className = item.invalid ? "stc-term is-invalid" : "stc-term";
+      term.dataset.action = "remove";
+      term.dataset.key = item.key;
       term.textContent = item.rawValue;
-      term.title = item.invalid
-        ? `${item.cellAddress}: ${item.message}`
-        : `${item.cellAddress} → ${item.parsedLabel}`;
+      term.title = item.invalid ? item.message : (item.parsedLabel || item.rawValue);
       expr.append(term);
     });
-  }
-
-  /**
-   * @param {PanelItem[]} items
-   */
-  function renderItems(items) {
-    const list = panel.querySelector("[data-field='list']");
-    if (!list) {
-      return;
-    }
-    list.replaceChildren();
-    list.hidden = items.length === 0;
-
-    for (const item of items) {
-      const row = document.createElement("li");
-      row.className = item.invalid ? "stc-token is-invalid" : "stc-token";
-      row.title = item.invalid ? item.message : `${item.rawValue} → ${item.parsedLabel}`;
-
-      const address = document.createElement("span");
-      address.className = "stc-address";
-      address.textContent = item.cellAddress;
-
-      const raw = document.createElement("span");
-      raw.className = "stc-raw";
-      raw.textContent = item.rawValue;
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "stc-token-x";
-      remove.dataset.action = "remove";
-      remove.dataset.key = item.key;
-      remove.setAttribute("aria-label", `Remove ${item.cellAddress}`);
-      remove.textContent = "×";
-
-      row.append(address, raw, remove);
-      list.append(row);
-    }
   }
 
   /**
@@ -371,7 +323,7 @@ function buildPanel(hint) {
         <span class="stc-pip is-on" aria-hidden="true"></span>
         <div>
           <div class="stc-title">Revision Time Calculator</div>
-          <div class="stc-subtitle"><span data-field="sheet">Sheet</span> · <span data-field="mode"></span></div>
+          <div class="stc-subtitle" data-field="mode"></div>
         </div>
       </div>
       <button type="button" class="stc-tool is-close" data-action="stop" aria-label="Close" title="Close"></button>
@@ -382,8 +334,6 @@ function buildPanel(hint) {
         <div class="stc-readout"><span data-field="minutes">0</span><span class="stc-unit">minutes</span></div>
         <div class="stc-meta"><span data-field="hours">0h 0m</span></div>
       </div>
-      <p class="stc-candidate" data-field="candidate" hidden></p>
-      <ul class="stc-tokens" data-field="list" hidden></ul>
       <p class="stc-invalid" data-field="invalid" hidden></p>
       <div class="stc-tools">
         <button type="button" class="stc-tool is-clear" data-action="clear" aria-label="Clear" title="Clear"></button>

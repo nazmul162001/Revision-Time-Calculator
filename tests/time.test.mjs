@@ -12,6 +12,14 @@ import { parseCellAddress, clickedCellAddress, parseSelectionLabel } from "../sr
 import { createSelectionManager } from "../src/content/selection-manager.js";
 import { isGoogleSheets } from "../src/content/sheet-detector.js";
 import { parseTimeToMinutes } from "../src/content/time-parser.js";
+import {
+  columnIndexToLetters,
+  findEngineerColumns,
+  hoursBesideName,
+  nameMatches,
+  parseRowSelection,
+  parseTsvRow,
+} from "../src/content/advance-mode.js";
 
 test("parses HH.MM spreadsheet values into integer minutes", () => {
   assert.equal(parseTimeToMinutes("3.13").totalMinutes, 193);
@@ -122,4 +130,124 @@ test("recognizes only Google Sheets URLs", () => {
   assert.equal(isGoogleSheets(new URL("https://docs.google.com/spreadsheets/d/abc/edit")), true);
   assert.equal(isGoogleSheets(new URL("https://docs.google.com/document/d/abc/edit")), false);
   assert.equal(isGoogleSheets(new URL("https://example.com/spreadsheets")), false);
+});
+
+test("splits a copied sheet row into cells", () => {
+  assert.deepEqual(parseTsvRow("Engineer1\tEngineer1 task\tman-hours\tFB hours\tCheck hours"), [
+    "Engineer1",
+    "Engineer1 task",
+    "man-hours",
+    "FB hours",
+    "Check hours",
+  ]);
+  assert.deepEqual(parseTsvRow('"Nazmul\tAhmed"\t1.17\nextra'), ["Nazmul\tAhmed", "1.17"]);
+  assert.deepEqual(parseTsvRow(""), []);
+});
+
+test("reads a row-number selection and ignores a normal cell", () => {
+  assert.deepEqual(parseRowSelection("42:42"), { rows: [42] });
+  assert.deepEqual(parseRowSelection("September!$42:$42"), { rows: [42] });
+  assert.deepEqual(parseRowSelection("10:12"), { rows: [10, 11, 12] });
+  assert.equal(parseRowSelection("H42"), null);
+  assert.equal(parseRowSelection("H:H"), null);
+  assert.equal(parseRowSelection("M644:M645"), null);
+  assert.deepEqual(parseRowSelection("1:40"), { tooWide: true });
+});
+
+test("matches an engineer name without matching a shorter fragment", () => {
+  assert.equal(nameMatches("Nazmul", "Nazmul"), true);
+  assert.equal(nameMatches("Nazmul Ahmed", "nazmul"), true);
+  assert.equal(nameMatches("  Nazmul  ", "Nazmul"), true);
+  assert.equal(nameMatches("Nazmul", "Naz"), false);
+  assert.equal(nameMatches("Solayman", "Solay"), false);
+  assert.equal(nameMatches("", "Nazmul"), false);
+});
+
+test("maps Engineer hour columns and skips the task column", () => {
+  const headers = [
+    "No",
+    "Case name",
+    "Assistant",
+    "Assistant task",
+    "man-hours",
+    "FB hours",
+    "Check hours",
+    "Engineer1",
+    "Engineer1 task",
+    "man-hours",
+    "FB hours",
+    "Check hours",
+    "Engineer2",
+    "Engineer2 task",
+    "man-hours",
+    "FB hours",
+    "Check hours",
+  ];
+  const found = findEngineerColumns(headers);
+  assert.equal(found.engineer1.nameIndex, 7);
+  assert.deepEqual(found.engineer1.hours, { revision: 9, feedback: 10, checking: 11 });
+  assert.equal(found.engineer2.nameIndex, 12);
+  assert.deepEqual(found.engineer2.hours, { revision: 14, feedback: 15, checking: 16 });
+  assert.equal(columnIndexToLetters(found.engineer1.nameIndex + 1), "H");
+  assert.equal(columnIndexToLetters(found.engineer1.hours.revision + 1), "J");
+});
+
+test("counts the three hour columns after each matching name", () => {
+  const row = [
+    "実行後",
+    "2026/10/01",
+    "case",
+    "status",
+    "Assistant",
+    "task",
+    "0.5",
+    "0.17",
+    "",
+    "Nazmul",
+    "1st check",
+    "0.33",
+    "0.08",
+    "",
+    "Nazmul",
+    "2nd check",
+    "1.17",
+    "0.25",
+    "0.5",
+  ];
+  assert.deepEqual(hoursBesideName(row, "Nazmul"), {
+    revision: 110,
+    feedback: 33,
+    checking: 50,
+    matches: 2,
+  });
+  assert.equal(hoursBesideName(row, "Solay").matches, 0);
+});
+
+test("finds Engineer1 on the October header row", () => {
+  const headers = [
+    "No",
+    "Delivery date",
+    "Case name",
+    "Status",
+    "Assistant",
+    "Assistant task",
+    "man-hours",
+    "Check hours",
+    "Assistant checker",
+    "Engineer1",
+    "Engineer1 task",
+    "man-hours",
+    "FB hours",
+    "Check hours",
+    "Engineer2",
+    "Engineer2 task",
+    "man-hours",
+    "FB hours",
+    "Check hours",
+  ];
+  const found = findEngineerColumns(headers);
+  assert.equal(found.engineer1.nameIndex, 9);
+  assert.deepEqual(found.engineer1.hours, { revision: 11, feedback: 12, checking: 13 });
+  assert.equal(found.engineer2.nameIndex, 14);
+  assert.deepEqual(found.engineer2.hours, { revision: 16, feedback: 17, checking: 18 });
 });

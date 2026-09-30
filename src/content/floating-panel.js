@@ -77,6 +77,22 @@ export async function createFloatingPanel(options) {
   const categoryNodes = panel.querySelectorAll("[data-action='category']");
   const pipNode = panel.querySelector(".stc-pip");
   const chipTextNode = chip.querySelector(".stc-chip-text");
+  const advanceForm = panel.querySelector("[data-field='advance-form']");
+  const advanceWatch = panel.querySelector("[data-field='advance-watch']");
+  const advanceError = panel.querySelector("[data-field='advance-error']");
+  const advanceNote = panel.querySelector("[data-field='advance-note']");
+  const advanceTitleWrap = panel.querySelector("[data-field='advance-title-wrap']");
+  const advanceScan = panel.querySelector("[data-field='advance-scan']");
+  const advanceTitle = panel.querySelector("[data-field='advance-title']");
+  const advanceTotals = panel.querySelector("[data-field='advance-totals']");
+  const advanceCalc = panel.querySelector("[data-action='advance-calculate']");
+  const advanceRev = panel.querySelector("[data-field='adv-rev']");
+  const advanceFb = panel.querySelector("[data-field='adv-fb']");
+  const advanceCk = panel.querySelector("[data-field='adv-ck']");
+  const advanceRevSub = panel.querySelector("[data-field='adv-rev-sub']");
+  const advanceFbSub = panel.querySelector("[data-field='adv-fb-sub']");
+  const advanceCkSub = panel.querySelector("[data-field='adv-ck-sub']");
+  const nameInput = panel.querySelector("[data-field='advance-name']");
 
   /** @type {PanelView | null} */
   let view = null;
@@ -97,6 +113,18 @@ export async function createFloatingPanel(options) {
     if (!(control instanceof HTMLElement)) {
       return;
     }
+    if (control.dataset.action === "advance") {
+      const on = !control.classList.contains("is-on");
+      control.classList.toggle("is-on", on);
+      control.setAttribute("aria-pressed", on ? "true" : "false");
+      options.onAction("advance", on ? "on" : "off");
+      return;
+    }
+    if (control.dataset.action === "advance-start") {
+      event.preventDefault();
+      options.onAction("advance-start", nameInput instanceof HTMLInputElement ? nameInput.value : "");
+      return;
+    }
     event.preventDefault();
     options.onAction(control.dataset.action || "", control.dataset.key || "");
   });
@@ -107,6 +135,17 @@ export async function createFloatingPanel(options) {
       options.onAction("minimize");
     }
   });
+
+  if (nameInput instanceof HTMLInputElement) {
+    nameInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      options.onAction("advance-start", nameInput.value);
+    });
+  }
 
   const header = panel.querySelector(".stc-header");
   header?.addEventListener("pointerdown", (event) => {
@@ -171,8 +210,8 @@ export async function createFloatingPanel(options) {
     if (!prefs) {
       return;
     }
-    if (typeof prefs.width === "number" && prefs.width >= 460) {
-      panel.style.width = `${Math.min(prefs.width, 720)}px`;
+    if (typeof prefs.width === "number" && prefs.width >= 660 && prefs.width <= 800) {
+      panel.style.width = `${prefs.width}px`;
     }
     if (typeof prefs.left === "number" && typeof prefs.top === "number") {
       place(prefs.left, prefs.top);
@@ -236,7 +275,9 @@ export async function createFloatingPanel(options) {
       statusNode.hidden = !next.statusText;
     }
     if (addNode) {
-      addNode.textContent = next.addLabel || "Add to Revision";
+      addNode.textContent = panel.classList.contains("is-advance-ready")
+        ? "Add Hours"
+        : (next.addLabel || "Add to Revision");
     }
     for (let i = 0; i < categoryNodes.length; i += 1) {
       const button = categoryNodes[i];
@@ -315,6 +356,66 @@ export async function createFloatingPanel(options) {
   }
 
   /**
+   * @param {Element | null} minutesNode
+   * @param {Element | null} hoursNode
+   * @param {string} text
+   */
+  function paintTotal(minutesNode, hoursNode, text) {
+    const raw = text || "0 min";
+    const parts = raw.split(" · ");
+    if (minutesNode) {
+      minutesNode.textContent = parts[0] || "0 min";
+    }
+    if (hoursNode) {
+      hoursNode.textContent = parts[1] || "0.00 hours";
+    }
+  }
+
+  /**
+   * @param {{ phase: string, note: string, error: string, revision: string, feedback: string, checking: string, ready: boolean }} state
+   */
+  function applyAdvance(state) {
+    const showWatch = state.phase === "selecting" || state.phase === "calculating" || state.phase === "result";
+    const calculating = state.phase === "calculating";
+    if (advanceForm instanceof HTMLElement) {
+      advanceForm.hidden = showWatch;
+    }
+    if (advanceWatch instanceof HTMLElement) {
+      advanceWatch.hidden = !showWatch;
+    }
+    if (advanceError instanceof HTMLElement) {
+      advanceError.hidden = !state.error;
+      advanceError.textContent = state.error || "";
+    }
+    if (advanceTitleWrap instanceof HTMLElement) {
+      advanceTitleWrap.hidden = !calculating;
+    }
+    if (advanceScan instanceof HTMLElement) {
+      advanceScan.hidden = !calculating;
+    }
+    if (advanceTitle) {
+      advanceTitle.textContent = "calculating...";
+    }
+    if (advanceNote) {
+      advanceNote.textContent = state.note || "";
+      advanceNote.hidden = !state.note;
+    }
+    if (advanceTotals instanceof HTMLElement) {
+      advanceTotals.hidden = state.phase !== "result";
+    }
+    paintTotal(advanceRev, advanceRevSub, state.revision);
+    paintTotal(advanceFb, advanceFbSub, state.feedback);
+    paintTotal(advanceCk, advanceCkSub, state.checking);
+    if (advanceCalc instanceof HTMLElement) {
+      advanceCalc.hidden = !showWatch || calculating || (state.phase === "result" && state.ready);
+    }
+    panel.classList.toggle("is-advance-ready", Boolean(state.ready));
+    if (addNode) {
+      addNode.textContent = state.ready ? "Add Hours" : (view?.addLabel || "Add to Revision");
+    }
+  }
+
+  /**
    * @param {string} action
    * @param {string} label
    */
@@ -353,6 +454,35 @@ export async function createFloatingPanel(options) {
      * @param {PanelView} next
      */
     update,
+    /**
+     * @param {boolean} on
+     */
+    setAdvanceMode(on) {
+      panel.classList.toggle("is-advance", on);
+      if (!on) {
+        panel.classList.remove("is-advance-ready");
+      }
+      const button = panel.querySelector("[data-action='advance']");
+      if (button) {
+        button.classList.toggle("is-on", on);
+        button.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+      if (on) {
+        applyAdvance({
+          phase: "idle",
+          note: "",
+          error: "",
+          revision: "0 min",
+          feedback: "0 min",
+          checking: "0 min",
+          ready: false,
+        });
+      }
+    },
+    /**
+     * @param {{ phase: string, note: string, error: string, revision: string, feedback: string, checking: string, ready: boolean }} state
+     */
+    applyAdvance,
     /**
      * @param {string} action
      * @param {string} label
@@ -398,12 +528,60 @@ function buildPanel(hint) {
         <div class="stc-expr" data-field="expr"></div>
         <div class="stc-readout"><span data-field="minutes">0</span><span class="stc-unit">minutes</span></div>
         <div class="stc-meta"><span data-field="hours">0h 0m</span></div>
+        <div class="stc-advance-screen">
+          <div class="stc-name-form" data-field="advance-form">
+            <input type="text" data-field="advance-name" placeholder="Enter Your Name" autocomplete="name" spellcheck="false" />
+            <button type="button" data-action="advance-start">Start</button>
+          </div>
+          <p class="stc-advance-error" data-field="advance-error" hidden></p>
+          <div class="stc-watch" data-field="advance-watch" hidden>
+            <div class="stc-watch-title" data-field="advance-title-wrap" hidden><span data-field="advance-title">calculating...</span><span class="stc-caret">_</span></div>
+            <div class="stc-scan" data-field="advance-scan" aria-hidden="true" hidden></div>
+            <p class="stc-watch-note" data-field="advance-note">Select row numbers</p>
+            <button type="button" class="stc-revision stc-advance-add" data-action="advance-calculate">Calculate</button>
+            <ul class="stc-advance-totals" data-field="advance-totals" hidden>
+              <li>
+                <span>Total Revision Time</span>
+                <strong data-field="adv-rev">0 min</strong>
+                <em data-field="adv-rev-sub">0.00 hours</em>
+              </li>
+              <li>
+                <span>Total Feedback Time</span>
+                <strong data-field="adv-fb">0 min</strong>
+                <em data-field="adv-fb-sub">0.00 hours</em>
+              </li>
+              <li>
+                <span>Total Checking Time</span>
+                <strong data-field="adv-ck">0 min</strong>
+                <em data-field="adv-ck-sub">0.00 hours</em>
+              </li>
+            </ul>
+          </div>
+        </div>
       </div>
       <p class="stc-invalid" data-field="invalid" hidden></p>
       <div class="stc-tools">
-        <button type="button" class="stc-tool is-clear" data-action="clear" aria-label="Clear" title="Clear"></button>
-        <button type="button" class="stc-tool is-copy" data-action="copy-time" aria-label="Copy" title="Copy"></button>
-        <button type="button" class="stc-revision" data-action="add-revision">Add to Revision</button>
+        <button type="button" class="stc-advance" data-action="advance" aria-pressed="false">
+          <span class="stc-advance-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke="#5af0ff" stroke-width="1.7" stroke-linecap="round"/>
+              <circle cx="9" cy="7" r="2.15" fill="#1c1e22" stroke="#7b5cff" stroke-width="1.7"/>
+              <circle cx="15" cy="12" r="2.15" fill="#1c1e22" stroke="#5af0ff" stroke-width="1.7"/>
+              <circle cx="8" cy="17" r="2.15" fill="#1c1e22" stroke="#3aa0ff" stroke-width="1.7"/>
+            </svg>
+          </span>
+          <span class="stc-advance-copy">Advance Mode</span>
+          <span class="stc-switch">
+            <span class="stc-switch-thumb"></span>
+            <span class="stc-switch-label is-off">OFF</span>
+            <span class="stc-switch-label is-on">ON</span>
+          </span>
+        </button>
+        <div class="stc-actions">
+          <button type="button" class="stc-tool is-clear" data-action="clear" aria-label="Clear" title="Clear"></button>
+          <button type="button" class="stc-tool is-copy" data-action="copy-time" aria-label="Copy" title="Copy"></button>
+          <button type="button" class="stc-revision" data-action="add-revision">Add to Revision</button>
+        </div>
       </div>
       <p class="stc-status" data-field="status" role="status" hidden></p>
     </div>

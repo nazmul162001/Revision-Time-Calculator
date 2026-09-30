@@ -15,6 +15,7 @@ export const MESSAGE_TYPES = Object.freeze({
   CLEAR_SELECTION: "CLEAR_SELECTION",
   EXTENSION_STATE: "EXTENSION_STATE",
   OPEN_REVISION: "OPEN_REVISION",
+  READ_SHEET_ROW: "READ_SHEET_ROW",
 });
 
 export const ROOT_ID = "sheet-time-calculator-root";
@@ -38,6 +39,6 @@ export const COPY_FEEDBACK_MS = 1400;
 export const STATUS_CLEAR_MS = 4200;
 
 export const PANEL_DEFAULTS = Object.freeze({
-  width: 520,
+  width: 680,
   margin: 16,
 });

@@ -70,6 +70,11 @@ function boot() {
   let clickBefore = null;
   /** @type {{ x: number, y: number } | null} */
   let lastPoint = null;
+  let advanceOn = false;
+  let advanceToken = 0;
+  let advanceSession = null;
+  /** @type {Promise<typeof import("./advance-mode.js")> | null} */
+  let advanceLoad = null;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     handleMessage(message)
@@ -141,6 +146,9 @@ function boot() {
     selection.clear();
     statusText = "";
     statusTone = "";
+    advanceOn = false;
+    advanceSession?.stop();
+    advanceSession = null;
     panel?.destroy();
     panel = null;
     reportState(false);
@@ -189,7 +197,7 @@ function boot() {
    * @param {PointerEvent} event
    */
   function onPointerDown(event) {
-    if (!isAddClick(event)) {
+    if (advanceOn || !isAddClick(event)) {
       return;
     }
     clickBefore = {
@@ -202,6 +210,12 @@ function boot() {
    * @param {MouseEvent} event
    */
   function onGridClick(event) {
+    if (advanceOn) {
+      if (isAdvanceClick(event)) {
+        advanceSession?.onSheetClick();
+      }
+      return;
+    }
     if (!isAddClick(event)) {
       return;
     }
@@ -242,6 +256,33 @@ function boot() {
    *
    * @param {MouseEvent | PointerEvent} event
    */
+  /**
+   * A plain click on the sheet, including the row-number headers.
+   * Shift, Alt, and Ctrl stay with Google Sheets.
+   *
+   * @param {MouseEvent | PointerEvent} event
+   */
+  function isAdvanceClick(event) {
+    if (mode !== EXTENSION_MODES.ACTIVE || event.button !== 0) {
+      return false;
+    }
+    if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) {
+      return false;
+    }
+    const host = panel?.host;
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    if (host && (target === host || host.contains(target))) {
+      return false;
+    }
+    if (target.closest("#t-name-box, #t-formula-bar-input, #docs-toolbar, #docs-menubar, #docs-chrome, .docs-sheet-tab-bar, [role='dialog'], [role='menu']")) {
+      return false;
+    }
+    return true;
+  }
+
   function isAddClick(event) {
     if (mode !== EXTENSION_MODES.ACTIVE || event.button !== 0) {
       return false;
@@ -403,6 +444,10 @@ function boot() {
         await copyAndFlash("copy-time", formatCopyTime(currentTotal()));
         break;
       case "add-revision":
+        if (advanceOn) {
+          await addAdvanceHours();
+          break;
+        }
         await addToRevision();
         break;
       case "category":
@@ -411,12 +456,102 @@ function boot() {
           render();
         }
         break;
+      case "advance":
+        await setAdvanceEnabled(key === "on");
+        break;
+      case "advance-start":
+        advanceSession?.start(key || "");
+        break;
+      case "advance-calculate":
+        advanceSession?.calculate();
+        break;
+      case "advance-add":
+        await addAdvanceHours();
+        break;
       case "copy-report":
         await copyAndFlash("copy-report", buildReport());
         break;
       default:
         break;
     }
+  }
+
+  async function readAdvanceRow(row) {
+    const response = await chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.READ_SHEET_ROW,
+      row,
+    }).catch(() => null);
+    return response?.ok && typeof response.text === "string" ? response.text : "";
+  }
+
+  /**
+   * @param {boolean} on
+   */
+  async function setAdvanceEnabled(on) {
+    const token = ++advanceToken;
+    if (!on) {
+      advanceOn = false;
+      advanceSession?.stop();
+      advanceSession = null;
+      panel?.setAdvanceMode(false);
+      render();
+      return;
+    }
+    advanceOn = true;
+    panel?.setAdvanceMode(true);
+    try {
+      if (!advanceLoad) {
+        advanceLoad = import(chrome.runtime.getURL("src/content/advance-mode.js"));
+      }
+      const mod = await advanceLoad;
+      if (!advanceOn || token !== advanceToken) {
+        return;
+      }
+      advanceSession?.stop();
+      advanceSession = mod.createAdvanceSession({
+        readNameBox,
+        readRowText: readAdvanceRow,
+        onChange: (state) => {
+          panel?.applyAdvance(state);
+        },
+      });
+    } catch {
+      if (token !== advanceToken) {
+        return;
+      }
+      advanceOn = false;
+      advanceSession = null;
+      panel?.setAdvanceMode(false);
+      setStatus("Advance Mode could not start.", "error");
+      render();
+    }
+  }
+
+  async function addAdvanceHours() {
+    const entries = advanceSession?.entries() || [];
+    if (!entries.length) {
+      return;
+    }
+    const opened = await chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.OPEN_REVISION,
+      url: REVISION_REPORT_URL,
+      minutes: entries[0].minutes,
+      category: entries[0].category,
+      entries,
+    }).catch(() => null);
+    if (!opened?.ok) {
+      panel?.applyAdvance({
+        phase: "watching",
+        note: "Could not open the report page.",
+        error: "",
+        revision: "",
+        feedback: "",
+        checking: "",
+        ready: true,
+      });
+      return;
+    }
+    deactivate();
   }
 
   async function addToRevision() {

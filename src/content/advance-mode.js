@@ -249,6 +249,8 @@ export function createAdvanceSession(deps) {
   /** @type {Set<number>} */
   const seen = new Set();
   const totals = { revision: 0, feedback: 0, checking: 0 };
+  let addingFeedback = false;
+  let pendingFeedback = 0;
   let tail = Promise.resolve();
 
   /**
@@ -279,6 +281,8 @@ export function createAdvanceSession(deps) {
       feedback: formatAdvanceTotal(totals.feedback),
       checking: formatAdvanceTotal(totals.checking),
       ready: sum > 0 && phase === "result",
+      adding: addingFeedback,
+      pending: pendingFeedback > 0 ? formatAdvanceTotal(pendingFeedback) : "",
     });
   }
 
@@ -297,11 +301,13 @@ export function createAdvanceSession(deps) {
     totals.revision = 0;
     totals.feedback = 0;
     totals.checking = 0;
+    addingFeedback = false;
+    pendingFeedback = 0;
     emit({ phase: "selecting", note: "Select row numbers", error: "" });
   }
 
   function onSheetClick() {
-    if (!alive || !query || (phase !== "selecting" && phase !== "result")) {
+    if (!alive || !query || addingFeedback || (phase !== "selecting" && phase !== "result")) {
       return;
     }
     const parsed = parseRowSelection(deps.readNameBox());
@@ -326,6 +332,8 @@ export function createAdvanceSession(deps) {
    * @param {{ rows: number[] } | { tooWide: true }} parsed
    */
   function rememberRows(parsed) {
+    addingFeedback = false;
+    pendingFeedback = 0;
     if ("tooWide" in parsed) {
       emit({ phase: "selecting", note: "Select one row, or up to 30.", error: "" });
       return;
@@ -354,8 +362,10 @@ export function createAdvanceSession(deps) {
       return;
     }
     const token = ++generation;
+    addingFeedback = false;
+    pendingFeedback = 0;
     emit({ phase: "calculating", note: "", error: "" });
-    enqueue(() => runCalculate(token));
+    return enqueue(() => runCalculate(token));
   }
 
   /**
@@ -428,6 +438,46 @@ export function createAdvanceSession(deps) {
     return `Rows ${selected.join(", ")}`;
   }
 
+  function isAddingFeedback() {
+    return alive && addingFeedback;
+  }
+
+  function beginAddFeedback() {
+    if (!alive || phase !== "result" || addingFeedback) {
+      return;
+    }
+    addingFeedback = true;
+    pendingFeedback = 0;
+    emit({ phase: "result", note: "Click feedback hours", error: "" });
+  }
+
+  /**
+   * @param {string} raw
+   */
+  function addFeedbackRaw(raw) {
+    if (!isAddingFeedback()) {
+      return;
+    }
+    const minutes = minutesFromCell(raw);
+    if (minutes <= 0) {
+      return;
+    }
+    pendingFeedback += minutes;
+    emit({ phase: "result", note: `${pendingFeedback} min selected`, error: "" });
+  }
+
+  function confirmFeedback() {
+    if (!alive || !addingFeedback) {
+      return;
+    }
+    if (pendingFeedback > 0) {
+      totals.feedback += pendingFeedback;
+    }
+    pendingFeedback = 0;
+    addingFeedback = false;
+    emit({ phase: "result", note: "", error: "" });
+  }
+
   function entries() {
     /** @type {{ category: string, minutes: number }[]} */
     const list = [];
@@ -456,7 +506,17 @@ export function createAdvanceSession(deps) {
     return alive && token === generation;
   }
 
-  return { start, onSheetClick, calculate, entries, stop };
+  return {
+    start,
+    onSheetClick,
+    calculate,
+    entries,
+    stop,
+    isAddingFeedback,
+    beginAddFeedback,
+    addFeedbackRaw,
+    confirmFeedback,
+  };
 }
 
 /**
@@ -559,4 +619,6 @@ function hourRole(label) {
  * @property {string} feedback
  * @property {string} checking
  * @property {boolean} ready
+ * @property {boolean} adding
+ * @property {string} pending
  */

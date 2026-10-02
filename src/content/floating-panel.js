@@ -92,6 +92,9 @@ export async function createFloatingPanel(options) {
   const advanceRevSub = panel.querySelector("[data-field='adv-rev-sub']");
   const advanceFbSub = panel.querySelector("[data-field='adv-fb-sub']");
   const advanceCkSub = panel.querySelector("[data-field='adv-ck-sub']");
+  const advanceFbExtra = panel.querySelector("[data-field='adv-fb-extra']");
+  const advanceMore = panel.querySelector("[data-action='advance-more'], [data-field='add-more']");
+  const advanceFeedbackCard = panel.querySelector(".is-feedback");
   const nameInput = panel.querySelector("[data-field='advance-name']");
 
   /** @type {PanelView | null} */
@@ -372,7 +375,7 @@ export async function createFloatingPanel(options) {
   }
 
   /**
-   * @param {{ phase: string, note: string, error: string, revision: string, feedback: string, checking: string, ready: boolean }} state
+   * @param {{ phase: string, note: string, error: string, revision: string, feedback: string, checking: string, ready: boolean, adding?: boolean, pending?: string }} state
    */
   function applyAdvance(state) {
     const showWatch = state.phase === "selecting" || state.phase === "calculating" || state.phase === "result";
@@ -406,6 +409,24 @@ export async function createFloatingPanel(options) {
     paintTotal(advanceRev, advanceRevSub, state.revision);
     paintTotal(advanceFb, advanceFbSub, state.feedback);
     paintTotal(advanceCk, advanceCkSub, state.checking);
+    if (advanceFbExtra instanceof HTMLElement) {
+      const pendingMinutes = (state.pending || "").split(" · ")[0];
+      advanceFbExtra.hidden = !pendingMinutes;
+      advanceFbExtra.textContent = pendingMinutes ? `+ ${pendingMinutes}` : "";
+    }
+    if (advanceFeedbackCard instanceof HTMLElement) {
+      advanceFeedbackCard.classList.toggle("is-adding", Boolean(state.adding));
+    }
+    if (advanceMore instanceof HTMLButtonElement) {
+      const adding = Boolean(state.adding);
+      advanceMore.hidden = state.phase !== "result";
+      advanceMore.dataset.action = adding ? "advance-confirm" : "advance-more";
+      advanceMore.classList.toggle("is-confirm", adding);
+      const label = advanceMore.querySelector("[data-field='add-more-label']");
+      if (label) {
+        label.textContent = adding ? "Confirm" : "Add more";
+      }
+    }
     if (advanceCalc instanceof HTMLElement) {
       advanceCalc.hidden = !showWatch || calculating || (state.phase === "result" && state.ready);
     }
@@ -476,6 +497,8 @@ export async function createFloatingPanel(options) {
           feedback: "0 min",
           checking: "0 min",
           ready: false,
+          adding: false,
+          pending: "",
         });
       }
     },
@@ -545,10 +568,15 @@ function buildPanel(hint) {
                 <strong data-field="adv-rev">0 min</strong>
                 <em data-field="adv-rev-sub">0.00 hours</em>
               </li>
-              <li>
+              <li class="is-feedback">
                 <span>Total Feedback Time</span>
                 <strong data-field="adv-fb">0 min</strong>
                 <em data-field="adv-fb-sub">0.00 hours</em>
+                <small data-field="adv-fb-extra" hidden></small>
+                <button type="button" class="stc-add-more" data-action="advance-more" data-field="add-more" hidden>
+                  <span class="stc-add-more-plus" aria-hidden="true">+</span>
+                  <span data-field="add-more-label">Add more</span>
+                </button>
               </li>
               <li>
                 <span>Total Checking Time</span>

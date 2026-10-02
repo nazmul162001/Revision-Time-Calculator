@@ -773,6 +773,71 @@ button:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.stc-advance-totals li.is-feedback {
+  position: relative;
+  padding-bottom: 46px;
+}
+
+.stc-advance-totals li.is-adding {
+  box-shadow:
+    inset 5px 5px 10px #08090b,
+    inset -3px -3px 8px #2c3038,
+    0 0 12px rgba(90, 240, 255, 0.14);
+}
+
+.stc-advance-totals small {
+  color: #5af0ff;
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.stc-add-more {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--stc-bg);
+  color: #5af0ff;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  box-shadow:
+    4px 4px 8px #08090b,
+    -3px -3px 6px #32363e,
+    inset 0 0 8px rgba(90, 240, 255, 0.14);
+}
+
+.stc-add-more-plus {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.stc-add-more.is-confirm {
+  padding: 0 12px;
+  color: #b8fbff;
+}
+
+.stc-add-more.is-confirm .stc-add-more-plus {
+  display: none;
+}
+
+.stc-add-more:active {
+  box-shadow:
+    inset 3px 3px 6px #08090b,
+    inset -2px -2px 5px #2c3038;
+}
+
 .stc-advance-add {
   align-self: flex-end;
   height: 48px;

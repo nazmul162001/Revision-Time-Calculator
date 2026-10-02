@@ -197,7 +197,11 @@ function boot() {
    * @param {PointerEvent} event
    */
   function onPointerDown(event) {
-    if (advanceOn || !isAddClick(event)) {
+    if (advanceOn) {
+      if (!advanceSession?.isAddingFeedback() || !isAdvanceClick(event)) {
+        return;
+      }
+    } else if (!isAddClick(event)) {
       return;
     }
     clickBefore = {
@@ -211,27 +215,52 @@ function boot() {
    */
   function onGridClick(event) {
     if (advanceOn) {
-      if (isAdvanceClick(event)) {
-        advanceSession?.onSheetClick();
+      if (!isAdvanceClick(event)) {
+        return;
       }
+      if (advanceSession?.isAddingFeedback()) {
+        const picked = readClickedRaw(event);
+        if (picked.wait) {
+          requestAnimationFrame(() => {
+            advanceSession?.addFeedbackRaw(readFormulaText() || picked.raw);
+          });
+          return;
+        }
+        advanceSession?.addFeedbackRaw(picked.raw);
+        return;
+      }
+      advanceSession?.onSheetClick();
       return;
     }
     if (!isAddClick(event)) {
       return;
     }
+    const picked = readClickedRaw(event);
+    if (picked.wait) {
+      requestAnimationFrame(() => {
+        addRawValue(readFormulaText() || picked.raw);
+      });
+      return;
+    }
+    addRawValue(picked.raw);
+  }
+
+  /**
+   * @param {MouseEvent} event
+   * @returns {{ raw: string, wait: boolean }}
+   */
+  function readClickedRaw(event) {
     const before = clickBefore || { label: "", raw: "" };
     clickBefore = null;
     const label = readNameBox();
     const raw = readFormulaText();
     if (isSameCellClick(before.label, label, event)) {
       rememberPoint(event);
-      addRawValue(before.raw || raw);
-      return;
+      return { raw: before.raw || raw, wait: false };
     }
     if (raw && raw !== before.raw) {
       rememberPoint(event);
-      addRawValue(raw);
-      return;
+      return { raw, wait: false };
     }
     const named = parseSelectionLabel(label);
     const beforeCell = singleCell(before.label);
@@ -240,14 +269,11 @@ function boot() {
       if (target && target !== beforeCell) {
         focusCell(target);
         rememberPoint(event);
-        requestAnimationFrame(() => {
-          addRawValue(readFormulaText() || raw);
-        });
-        return;
+        return { raw, wait: true };
       }
     }
     rememberPoint(event);
-    addRawValue(raw || before.raw);
+    return { raw: raw || before.raw, wait: false };
   }
 
   /**
@@ -464,6 +490,12 @@ function boot() {
         break;
       case "advance-calculate":
         advanceSession?.calculate();
+        break;
+      case "advance-more":
+        advanceSession?.beginAddFeedback();
+        break;
+      case "advance-confirm":
+        advanceSession?.confirmFeedback();
         break;
       case "advance-add":
         await addAdvanceHours();

@@ -14,6 +14,7 @@ import { isGoogleSheets } from "../src/content/sheet-detector.js";
 import { parseTimeToMinutes } from "../src/content/time-parser.js";
 import {
   columnIndexToLetters,
+  createAdvanceSession,
   findEngineerColumns,
   hoursBesideName,
   nameMatches,
@@ -250,4 +251,42 @@ test("finds Engineer1 on the October header row", () => {
   assert.deepEqual(found.engineer1.hours, { revision: 11, feedback: 12, checking: 13 });
   assert.equal(found.engineer2.nameIndex, 14);
   assert.deepEqual(found.engineer2.hours, { revision: 16, feedback: 17, checking: 18 });
+});
+
+test("adds extra feedback hours only after confirm", async () => {
+  const row = ["Nazmul", "task", "1.00", "", "0.21"].join("\t");
+  /** @type {import("../src/content/advance-mode.js").AdvanceView | null} */
+  let view = null;
+  const session = createAdvanceSession({
+    readNameBox: () => "12:12",
+    readRowText: async () => row,
+    onChange: (state) => {
+      view = state;
+    },
+  });
+  session.start("Nazmul");
+  session.onSheetClick();
+  await session.calculate();
+  assert.equal(view?.revision, "60 min · 1.00 hours");
+  assert.equal(view?.feedback, "0 min");
+  assert.equal(view?.checking, "21 min · 0.35 hours");
+  session.beginAddFeedback();
+  assert.equal(view?.adding, true);
+  session.addFeedbackRaw("0.30");
+  session.addFeedbackRaw("0.15");
+  session.addFeedbackRaw("Completed");
+  assert.equal(view?.feedback, "0 min");
+  assert.equal(view?.revision, "60 min · 1.00 hours");
+  assert.equal(view?.checking, "21 min · 0.35 hours");
+  assert.equal(view?.pending, "45 min · 0.75 hours");
+  session.confirmFeedback();
+  assert.equal(view?.adding, false);
+  assert.equal(view?.pending, "");
+  assert.equal(view?.feedback, "45 min · 0.75 hours");
+  assert.equal(view?.revision, "60 min · 1.00 hours");
+  assert.equal(view?.checking, "21 min · 0.35 hours");
+  const feedback = session.entries().find((entry) => entry.category === "Feedback Response");
+  const revision = session.entries().find((entry) => entry.category === "Revision");
+  assert.equal(feedback?.minutes, 45);
+  assert.equal(revision?.minutes, 60);
 });
